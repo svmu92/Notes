@@ -1,0 +1,15 @@
+Kernel commands switches
+-----------------------------
+1 or single - enter single user mode
+
+n - runlevel-n
+
+init=/bin/bash - load /bin/bash instead of /sbin/init process
+
+root=/dev/sdXX - lets the system boot to a different root partition.
+
+ro - boot system in read-only mode. (can be used to run fsck)
+
+debug - prints a more verbose output of the kernel loading status
+
+selinux 0 or 1 - disables/enables selinux module

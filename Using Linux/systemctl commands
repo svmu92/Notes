@@ -1,0 +1,146 @@
+Commands
+-----------
+
+$ systemctl list-units --type service
+
+$ systemctl list-units --type service --state running
+
+$ systemctl --no-pager | grep service | grep running | column -t
+
+$ systemctl list-units --type service --state running --no-legend
+
+$ systemctl list-units --type service --state exited
+
+$ systemctl list-units --type service --state failed
+
+#List all services systemd is aware of
+$ systemctl list-unit-files --type service
+
+
+NOTE:
+Service files, and indeed all other types of unit file, generally exist in /usr/lib/systemd/system. From this location, files are symlinked into the runlevel directories at /etc/systemd/system/.
+
+multi-user.target.wants - which are basically the services required for a multi-user session (the typical mode of operation).
+
+/etc/systemd/system/multi-user.target.wants - consists of several .service and .mount files
+These services are all enabled to start in a multi-user session.
+
+
+static is something different; this is the terminology used when a unit file exists, isn't enabled, but has no ability to become enabled, owing to a missing [Install] section of its unit file.
+$ systemctl --no-pager list-unit-files --type service --state static
+
+
+
+# To display contents of a service file
+$ systemctl cat <XXXX>.service
+
+PartOf - suggests it's run as part of XXX service.
+Wants - suggests it is run when XXX service is run.
+
+
+
+$ sudo systemctl start XXX - runs ExecStart portion of service file
+$ sudo systemctl stop XXX - runs ExecStop portion of service file
+
+ExecStartPre - commands executed before the main ExecStart command is run.
+
+
+
+When we're disabling and enabling our services, what we're actually doing is creating a symlink from the default location of our httpd unit file, to the multi-user.target.wants directory.
+
+On boot, systemd will check this directory at the appropriate time and start the services it finds there.
+
+
+$ systemctl enable --now httpd
+
+The multi-user.target is roughly equivalent to runlevels 2, 3, and 4.
+
+
+Common services
+----------------
+auditd.service - Linux audit daemon (/var/log/audit)
+chronyd.service - keeping the system clock correct. 
+crond.service - daemon responsible for making sure that scheduled commands are run when they're supposed to be.
+lvm2-*.service - collection of lvm2 service files are used to maintain and monitor Logical Volume Manager (LVM) setups. 
+NetworkManager.service -
+nfs.service - the nfs suite of services are for management of Network File System (NFS) devices.
+postfix.service - (on RH systems)
+rsyslog.service - the system log daemons, responsible for writing logs to text files in /var/log 
+sshd.service - 
+systemd-journald.service - journald is the logging daemon managed by systemd
+systemd-logind.service - manages user logins to the systems 
+
+
+
+$ systemd-analyze
+- to see how long our system took to boot
+
+$ systemd-analyze blame 
+- to see what process(service) is taking more seconds
+
+
+
+Service files entries
+-------------------
+[Unit] is the area for generic entries, not specific to the Service type.
+
+Description - a short and snappy entry that can be understood at a glance.
+
+Documentation - man: or https:// or info::
+
+After
+Before
+- space-separated list of unit names, which stipulates the services that need to start after (or before) this one.
+Eg:
+After=network.target sshd-keygen.service
+
+Wants
+- listing services which it would be nice to trigger, prior to this service starting
+Eg:
+Wants=sshd-keygen.service
+
+
+Wants= is a less-mandated version of Requires=. If a Wants= service fails to start, the parent service will still give it a try, if a Requires= service fails, the parent doesn't either.
+
+The [Service] block is specific to service options.
+
+Type=notify - notify here means systemd expects the daemon to send a notification message once it's finished starting up.
+EnvironmentFile=/etc/sysconfig/sshd - Used to point the service to the file that contains its environment variables
+ExecStart gives us the command that's run. 
+
+ExecReload 
+- This section tells systemd what should be run if the systemctl reload command is run. 
+
+Killmode 
+- This directive specifies how processes of the unit's own creation are to be killed. 
+
+ExecStop is optional, and generally only used if the init daemon has a specific cleanup job to do.
+
+Restart
+- option tells systemd how the process is to be restarted.
+- on-failure used here means XXX will be restarted on an unclean exit code, an unclean signal, a timeout, or if the watchdog timeout for a service is breached
+
+RestartSec
+- RestartSec is the specified time to take before restarting the sshd service, following the Restart= criteria being met.
+
+
+[Install] is another generic section.
+- This section holds the installation information for the unit file, meaning it's read by the enable and disable directives when run
+
+
+
+$ sudo systemctl edit sshd.service
+- Create the directory and file for the sshd.service unit 
+
+
+
+
+
+
+
+
+
+
+
+
+

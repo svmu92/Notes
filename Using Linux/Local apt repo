@@ -1,0 +1,26 @@
+Server side
+---------------
+sudo apt-get install apt-mirror
+
+vi /etc/apt/mirror.list
+(Config file)
+
+sudo apt-mirror 
+(Will take a lot of time  > 40 GB data)
+(Packages are downloaded to /var/spool/apt-mirror)
+
+/var/spool/apt-mirror/var/clean.sh
+(Delete obsolete packages)
+
+HTTP/FTP Link to the repo
+-----------------------------
+cd /var/www/html/
+
+sudo ln -s /var/spool/apt-mirror ubuntu
+
+Client side
+------------
+deb http://<server-ip>:
+(Add server url to /etc/sources.list on client)
+
+

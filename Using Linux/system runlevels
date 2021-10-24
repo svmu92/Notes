@@ -1,0 +1,28 @@
+telinit [OPTIONS...] COMMAND
+
+Send control commands to the init daemon.
+
+Commands:
+  0              Power-off the machine
+  6              Reboot the machine
+  2, 3, 4, 5     Start runlevelX.target unit
+  1, s, S        Enter rescue mode
+  q, Q           Reload init daemon configuration
+  u, U           Reexecute init daemon
+
+Options:
+     --help      Show this help
+     --no-wall   Don't send wall message before halt/power-off/reboot
+
+
+Alternate way to shutdown
+
+# telinit 0
+
+
+systemd no longer uses runlevels. Instead targets are used.
+- multi-user target
+- graphical target
+
+$ systemctl get-default
+

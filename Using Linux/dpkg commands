@@ -1,0 +1,43 @@
+Install a debian (.deb) package
+	# dpkg -i <XYZ.deb>
+
+List all installed packages
+	# dpkg -l
+	
+Remove a package
+	# dpkg -r <XYZ>
+	
+	# dpkg -p <XYZ> (including config files)
+	
+View the content of a package
+	# dpkg -c <XYZ.deb>
+	
+Check a package is installed or not
+	# dpkg -s <XYZ>
+	
+Check the location of installed packages
+	# dpkg -L <XYZ>
+	
+Install all packages from a directory
+	# dpkg -R --install <folder>/
+	
+Unpack the package but dont configure
+	# dpkg --unpack <XYZ.deb>
+	
+Reconfigure a unpacked package
+	# dpkg --configure <XYZ>
+	
+Replace available package information
+	# dpkg --update-avail package_name
+	
+Erase existing available information of package
+	# dpkg --clear-avail
+	
+Forget uninstalled and available packages
+	# dpkg --forget-old-unavail
+	
+Display dpkg License
+	# dpkg --license
+	
+Display dpkg version
+	# dpkg --version

@@ -1,0 +1,33 @@
+abdefghijklmnopqrstuvwxyz
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+1234567890
+
+
+Ha HaHa
+
+MetaCharacters (Need to be escaped):
+.[{()\^$|?*+
+
+coreyms.com
+
+321-666-4321
+
+IP - 10.2.216.182
+123.666.1234
+10.W6.E4R.67
+
+Mr. Scahfer
+Mr Smith
+Mr Davis
+Mrs Robinson
+
+pat
+cat
+mat
+hat
+
+Mrs T
+Mr. D
+Mrs. 7
+Mr DE
+Mr. z

@@ -1,0 +1,15 @@
+apt-get upgrade
+
+apt-get dist-upgrade
+
+apt-get upgrade -yes
+
+
+apt-get <package> --download-only
+(Packages are downloaded to /var/cache/apt)
+
+apt-get install <path/to/package>
+
+apt-get autoclean
+(Remove files that are no longer used)
+

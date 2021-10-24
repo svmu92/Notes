@@ -1,0 +1,375 @@
+vim notes
+===============
+
+
+Modes
+-------
+Normal/Command mode
+Insert mode
+Line mode
+
+
+Essential navigation commands
+----------------------------
+
+Move down a line - "j"
+
+Move up a line - "k"
+
+Move to the right - "l"
+
+Move to the left - "h"
+
+
+
+     ^
+     k
+< h     l >
+     j
+   (down)
+  
+  
+Page down - "Ctrl + f"
+
+Page up - "Ctrl + b"
+
+
+
+Move forward by a word - "w"
+
+Ignore punctuation (. , etc) - "W"
+
+
+Move backward by a word - "b"
+
+Ignore punctuation - "B"
+
+
+
+Move to the beginning of current line - 0 (zero)
+
+Move to the first character on the line - ^
+
+Move to the end of the line - $
+
+
+
+Go to line N - Ngg or NG, where N is the line number
+In line mode, :N
+
+Go to 1st line - gg
+In line mode, :0
+
+
+Go to last line - G
+In line mode, :$
+
+
+Find how many lines are in the file - Ctrl + g
+
+More info with - g, Ctrl+g
+
+
+
+Turn ruler on - :set ruler
+
+Toggle ruler - :set ruler!
+
+
+Move the text from current position up my screen - z Enter
+
+Execute/Repeat previously executed command - . (period)
+
+Deleting
+=============
+
+delete character at current cursor position - x
+
+delete character to the left of cursor - X
+
+delete a word/part of word from current cursor position including space - dw
+
+delete a word to the left of the current cursor position - db
+
+delete a character on which cursor is placed - dl (Same as x)
+
+delete a character to the left of the cursor - dh (Same as X)
+
+delete current line and one below it - dj
+
+delete current line and one above it - dk
+
+delete everything to the left on the line from current cursor position - d0
+
+delete everything to the right on the line from current cursor position - d$ or D
+
+
+delete current line - dd
+
+delete N lines from current line onwards - Ndd
+
+delete N words from current one - dNw
+
+delete N words from current one M times - MdNw
+
+
+
+
+Getting help in vim
+-------------------------
+To get help with command - :help command> or :h command>
+
+To exit out of help - :q
+
+To go back to previous help section - Ctrl + o
+
+To move forward to previously visited section - Ctrl + i
+
+To go to help of a highlighted section where cursor is placed - Ctrl+]
+
+To get help of Ctrl+letter commands - :h ^letter
+
+Move control back to file from help menu - Ctrl + ww
+
+Auto-expand of commands - :h :<letter> Ctrl+d  (Tab instead of Crl+d will cycle through options)
+
+
+
+
+
+
+Cutting, Copying and Pasting
+==============================
+Cut text = delete and save into a register - d, x
+
+unnamed register = default register
+
+Paste below the line where cursor is - p
+
+Paste above the line where cursor is  - P
+
+Copy, yank - y
+
+Copy 2 word - y2w
+
+Copy N line - Nyy
+
+Undo - u
+
+Redo - Ctrl+r
+
+
+
+
+Registers
+================
+- Unnamed (default)
+- Numbered
+- Named
+
+"" (unnamed) holds text from d,c,s,x and y operations
+"0 holds last text yanked (y)
+"1 holds last deleted text (d) or changed (c).
+- Numbered registers shift with each d or c.
+
+
+Display registers contents - :reg Enter - 
+
+Paste the last yanked line - "0P
+
+Paste content in register number X - "XP
+
+
+Blackhole register - "_ (will not affect the current register status)
+
+Delete text into blackhole register - "_dd ("1 won't be updated)
+
+
+
+Named registers:
+ 26 named registers - a to z
+ 
+Copy into "a" register - "ayy
+
+Paste from "a" register - "bp
+
+Cut a word into "z" register - "zdw
+
+Append a line to "b" register - "Byy
+
+Look at contents of registers 1 and "z" - :reg 1z
+
+Paste the contents in "z" register N times - N"zp or "zNp
+
+
+
+
+Inserting, Replacing, Joining
+=============================
+insert - i
+
+insert at the beginning of the current line - I
+
+insert after current cursor position - a
+
+insert at the end of current line - A
+
+insert a new line below current line - o
+
+insert a new line above current line - O
+
+insert N repeats of character * - Ni * esc (eg: 80i * esc)
+
+create N new lines that start with # character - No # esc (eg:5o # esc)
+
+
+
+replace a character - r
+
+replace multiple characters - R
+
+replace a word - cw
+
+replace and place replaced word in register - "acw
+
+replace rest of the line from current position - C
+
+replace entire line - cc
+
+
+
+change case - ~
+
+change case of a word - g~w
+
+change case of entire line till end from current cursor position - g~$
+
+change case of entire line - g~~
+
+change case of a word to uppercase - gUw/gUW
+
+change case of entire line to uppercase - gUU
+
+change case of a word to lower case - guw/guW
+
+change case of entire line to lowercase - guu
+
+
+
+join line with next line - J
+
+join line with next line without adding space - gJ
+
+join n lines together - NJ
+
+
+
+
+Searching, Finding and Replacing
+=================================
+
+search in the line forward - f <character>
+
+search in the line backward - F <character>
+
+repeat the last search done in line - ;
+
+repeat the last search backward - ,
+
+t <character>
+T <character> - one position before <character>
+
+
+delete word including the space - dtw, df<space>
+
+Search for word - /<word> enter
+
+continue the seach for word - n
+
+continue the search backwards - N
+
+check whether search is turned on - :set is?  ..>> incsearch
+
+highlight the seach - hls/hlsearch - :set hls
+
+search and repeat command - n . (repeatedly)
+	For example: repeatedly change and to & - /and---> cw & ---> n ---> . 
+	
+	
+search and place position before <word> - ?<word>
+
+search for next occurence of word nearest to the cursor - * (matches an entire word, not substrings)
+
+search for next occurence of word nearest to the cursor backward - #
+
+
+delete everything till the next occurence of <word> - d/<word> enter
+
+copy everything till the next occurence of <word> - a"y/<word> enter
+
+
+
+
+find and replace - text first occurence - :s/old/new/
+
+find and replace - all occurences on current line - :s/old/new/g
+
+
+find and replace - :[range]s/old/new/[flags]
+
+find and replace on line N - Ns/old/new/g
+
+find and replace on lines 1..N - :1,5s/old/new/g
+
+last line - $
+
+current line - .
+
+all lines - %
+
+find and replace on current line to last line - :.,$s/old/new/g
+
+find and replace on all lines - :%s/old/new/g
+
+find and replace between 2 lines having patterns - :/pattern-1/,/pattern-2/s/old/new/g 
+
+							eg: 	:/Global/,/Local/s/net/org/g
+								:/Local/,$s/net/org/g
+								
+escaping special characters during find and replace - 
+Replace /var/spool with /usr/local in current line - 	:s/\/var\/spool/\/usr\/local/g 
+								:s#/var/spool#/usr/local#g
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
