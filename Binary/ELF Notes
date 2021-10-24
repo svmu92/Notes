@@ -1,0 +1,135 @@
+ELF
+--------
+
+$ readelf -h a.out  - to see the ELF header
+
+$ nm a.out - to see the symbols
+
+$ size a.out - view size of the different sections in a.out
+
+$ strings "string" - to search a string in elf file
+
+$ strip a.out - to remove symbol table information
+
+$ sum a.out - print checksum and block count
+
+
+
+- The ELF file has an Elf Header, Elf Header specifies the location and size of Program Header and Section Header in the file; 
+
+- section header specifies the location and attributes of each segment in the file, including our familiar code segment, data segment, only Read data segment, etc.;
+
+- Program HEADER indicates the location and attributes of each segment in the file, and Segment is a collection of one or more sections.
+
+$ readelf -l a.out - view the program header information
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  PHDR           0x0000000000000040 0x0000000000000040 0x0000000000000040
+                 0x00000000000002d8 0x00000000000002d8  R      0x8
+  INTERP         0x0000000000000318 0x0000000000000318 0x0000000000000318
+                 0x000000000000001c 0x000000000000001c  R      0x1
+      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x00000000000006c0 0x00000000000006c0  R      0x1000
+  LOAD           0x0000000000001000 0x0000000000001000 0x0000000000001000
+                 0x00000000000002b5 0x00000000000002b5  R E    0x1000
+  LOAD           0x0000000000002000 0x0000000000002000 0x0000000000002000
+                 0x0000000000000198 0x0000000000000198  R      0x1000
+  LOAD           0x0000000000002d88 0x0000000000003d88 0x0000000000003d88
+                 0x0000000000000288 0x0000000000000290  RW     0x1000
+  DYNAMIC        0x0000000000002d98 0x0000000000003d98 0x0000000000003d98
+                 0x0000000000000210 0x0000000000000210  RW     0x8
+  NOTE           0x0000000000000338 0x0000000000000338 0x0000000000000338
+                 0x0000000000000020 0x0000000000000020  R      0x8
+  NOTE           0x0000000000000358 0x0000000000000358 0x0000000000000358
+                 0x0000000000000044 0x0000000000000044  R      0x4
+  GNU_PROPERTY   0x0000000000000338 0x0000000000000338 0x0000000000000338
+                 0x0000000000000020 0x0000000000000020  R      0x8
+  GNU_EH_FRAME   0x0000000000002048 0x0000000000002048 0x0000000000002048
+                 0x0000000000000044 0x0000000000000044  R      0x4
+  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000000 0x0000000000000000  RW     0x10
+  GNU_RELRO      0x0000000000002d88 0x0000000000003d88 0x0000000000003d88
+                 0x0000000000000278 0x0000000000000278  R      0x1
+
+
+9 different program header types ==> 9 different segments
+
+
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     
+   01     .interp 
+   02     .interp .note.gnu.property .note.gnu.build-id .note.ABI-tag .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt 
+   03     .init .plt .plt.got .plt.sec .text .fini 
+   04     .rodata .eh_frame_hdr .eh_frame 
+   05     .init_array .fini_array .dynamic .got .data .bss 
+   06     .dynamic 
+   07     .note.gnu.property 
+   08     .note.gnu.build-id .note.ABI-tag 
+   09     .note.gnu.property 
+   10     .eh_frame_hdr 
+   11     
+   12     .init_array .fini_array .dynamic .got 
+
+
+
+- Each segment has multiple sections
+
+ 01-Interp: This is the interpreter segment, which only includes a section: .interp
+ 
+ 02-load: This segment includes many sections, including very important code segments .Text and read-only data segments - Rodata, 
+ this segment is to be loaded, the type is LOAD, which specifically indicates this, 
+ from the Flags field, you can see This segment is readable can be performed, 
+ the segment is not writable,  there is no case where the executable area is maliciously tampered with.
+ 
+ 03-load: This segment is also to be loaded, which includes a more important data segment .DATA and .BSS segment, you can see from the Flags field, this segment is readable.
+ 
+
+Process of ELF file load
+========================
+- Load the properties to the segment of PT_LOAD to memory.
+
+- Call the ELF_MAP interface, map the attribute of the ELF file to the segment of PT_LOAD to a period of memory.
+
+- Update this process MM memory address space
+
+- The MM records the code segment, data segment, BSS segment, a stack, MMAP segment, and stack of the process.
+
+- Clear old execution environments, set new execution environments. 
+
+- Determine the entrance address. 
+	For static files, he entry address is the entry address defined by the ELF file header.
+
+	For dynamic files, the interpreter is required, so the entrance address is the inlet address of the interpreter.
+	The ELF interpreter is responsible for dynamic linking. It has to be a file (technically a statically linked ELF shared library) at some fixed location in the file hierarchy (often /lib/ld.so.2 or /lib/ld-linux.so.2 or /lib64/ld-linux-x86-64.so.2 )
+	 
+	
+
+
+   mm_struct:
+	stack segment - stack_start, stack_end
+	mmap segment - mmap_base
+	heap segment - start_brk, brk
+	data segment - start_data, end_data
+	text segment - start_code, end_code
+
+include/linux/mm_types.h
+----------------------
+struct mm_struct {
+	....
+
+	unsigned long start_code, end_code, start_data, end_data;
+	unsigned long start_brk, brk, start_stack;	
+	....
+};
+
+
+fs/binfmt_elf.c
+----------------
+- create_elf_tables() in kernel
+
+

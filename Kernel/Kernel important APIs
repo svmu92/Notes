@@ -1,0 +1,122 @@
+
+Processes
+-------
+
+do_fork() ----> __do_fork()
+
+
+do_exit() ----> exit_notify()
+
+
+
+
+Scheduler
+-----------
+
+- "struct sched_entity" - <linux/sched.h>
+	u64	vruntime;
+	
+- static void update_curr(strucrt cfs_rq *cfs_rq);
+
+- update_curr() ----> __update_curr() ----> calc_delta_fair()
+	Now, 
+	update_curr() ----> calc_delta_fair()
+
+- __pick_next_entity()
+	static struct sched_entity *__pick_next_entity(struct sched_entity *se);
+	- rb_next(&se->run_node);
+	- return rb_entry(left, struct sched_entity, run_node);
+
+
+- enqueue_entity()
+	static void enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
+	- update_curr()
+	- __enqueue_entity()
+		- rb_insert_color_cached()
+
+- dequeue_entity()
+	satic void dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int sleep)
+	- update_curr()
+	- __dequeue_entity()
+		- static void __dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se);
+		- rb_erase(&se->run_node, &cfs_rq->tasks_timeline);
+
+
+- struct rq
+
+- struct cfs_rq
+
+- schedule() and __schedule()
+
+- pick_next_task()
+	old - static inline struct task_struct *pick_next_task(struct rq *rq)
+	
+	now - static inline struct task_struct *pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf);
+	
+- fair_sched_class.pick_next_task()
+
+- pick_next_task_fair()
+
+
+
+
+- add_wait_queue()
+	void add_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+	- __add_wait_queue(wq_head,wq_entry);
+	
+	
+- prepeare_to_wait()
+	void prepare_to_wait(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
+	- __add_wait_queue(wq_head, wq_entry);
+
+
+- finish_wait()
+	void finish_wait(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+	- __set_current_state(TASK_RUNNING);
+
+- remove_wait_queue()
+	void remove_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
+	- __remove_wait_queue(wq_head, wq_entry);
+
+
+
+- wake_up()
+	int wake_up(struct task_struct *p)
+	- try_to_wake_up(p, TASK_NORMAL, 0);
+
+- try_to_wake_up()
+	static int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+	- preempt_disable()
+	- p->state = TASK_RUNNING
+	- preempt_enable()
+
+
+
+- context_switch()
+	static __always_inline struct rq *context_switch(struct rq *rq, struct task_struct *prev, struct task_struct *next, struct rq_flags *rf);
+	- prepare_task_switch()
+	- membarrier_switch_mm()
+	- switch_to()
+	- finish task_switch()
+	
+
+- set_tsk_need_resched()
+	static inline void set_tsk_need_resched(struct task_struct *tsk)
+	{
+		set_tsk_thread_flag(tsk,TIF_NEED_RESCHED);
+	}	
+	
+- clear_tsk_need_resched()
+	static inline void clear_tsk_need_resched(struct task_struct *tsk)
+	{
+		clear_tsk_thread_flag(tsk,TIF_NEED_RESCHED);
+	}
+
+- need_resched()
+	static __always_inline bool need_resched(void)
+	{
+		return unlikely(tif_need_resched());
+	}
+
+
+

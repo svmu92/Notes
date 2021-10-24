@@ -1,0 +1,238 @@
+iABI object file format, called ELF (Executable and Linking Format)
+
+ELF is the abbreviation for Executable and Linkable Format and defines the structure for binaries, libraries, and core files. The formal specification allows the operating system to interpreter its underlying machine instructions correctly. ELF files are typically the output of a compiler or linker and are a binary format.
+
+
+-A relocatable file holds code and data suitable for linking with other object files to create an execut-
+able or a shared object file.
+
+-An executable file holds a program suitable for execution; the file specifies how exec (BA_OS) creates
+a program’s process image.
+
+-A shared object file holds code and data suitable for linking in two contexts. First, the link editor may process it with other relocatable and shared object files to create another object
+file. Second, the dynamic linker combines it with an executable file and other shared objects to
+create a process image.
+
+-object files are binary representations of programs intended to
+execute directly on a processor.
+
+
+=================
+Linking View
+=================
+
+|-------------------|
+|ELF Header         |
+|-------------------|
+|Program Header     |
+|Table Optional     |
+|-------------------|
+|Section1           |
+|-------------------|
+|...                |
+|-------------------|
+|Section n          |
+|-------------------|
+|...                |
+|-------------------|
+|...                |
+|-------------------|
+|Section Header     |
+|Table              |  
+|-------------------|
+
+
+
+=================
+Execution View
+=================
+
+|-------------------|
+|ELF Header         |
+|-------------------|
+|Program Header     |
+|Table              |
+|-------------------|
+|Segment 1          |
+|                   |
+|                   |
+|-------------------|
+|Segment 2          |
+|                   |
+|                   |
+|-------------------|
+|...                |
+|-------------------|
+|Section Header     |
+|Table optional     |  
+|-------------------|
+
+
+
+
+-An ELF header resides at the beginning and holds a ‘‘road map’’ describing the file’s organization
+
+-Sections hold the bulk of object file information for the linking view: instructions, data, symbol table, reloca-
+tion information, and so on.
+
+-A program header table, if present, tells the system how to create a process image. Files used to build a pro-
+cess image (execute a program) must have a program header table; relocatable files do not need one.
+
+-A section header table contains information describing the file’s sections. Every section has an entry in the
+table; each entry gives information such as the section name, the section size, etc. Files used during link-
+ing must have a section header table; other object files may or may not have one.
+
+
+
+-Object files therefore represent some control data with a machine-independent format, making it possible to identify
+object files and interpret their contents in a common way.
+
+-For portability reasons, ELF uses no bit-fields.
+
+
+
+ELF Header
+=============
+
+#define EI_NIDENT 16
+
+typedef struct {
+        unsigned char   e_ident[EI_NIDENT];
+        Elf32_Half      e_type;
+        Elf32_Half      e_machine;
+        Elf32_Word      e_version;
+        Elf32_Addr      e_entry;
+        Elf32_Off       e_phoff;
+        Elf32_Off       e_shoff;
+        Elf32_Word      e_flags;
+        Elf32_Half      e_ehsize;
+        Elf32_Half      e_phentsize;
+        Elf32_Half      e_phnum;
+        Elf32_Half      e_shentsize;
+        Elf32_Half      e_shnum;
+        Elf32_Half      e_shstrndx;
+} Elf32_Ehdr;
+
+e_ident - The initial bytes mark the file as an object file and provide machine-independent data
+with which to decode and interpret the file’s contents.
+
+e_type - identifies the object file type.
+_ _______________________________________
+ET_NONE   0  No file type
+ET_REL    1  Relocatable file
+ET_EXEC   2  Executable file
+ET_DYN    3  Shared object file
+ET_CORE   4  Core file
+ET_LOPROC  0xff00  Processor-specific
+ET_HIPROC  0xffff  Processor-specific
+
+-Values from ET_LOPROC through ET_HIPROC (inclusive) are reserved for
+processor-specific semantics.
+
+
+e_machine - This member’s value specifies the required architecture for an individual file.
+
+eg: EM_386 - 3 - Intel 80386
+    EM_860 - 7 - Intel 80860
+
+e_version - This member identifies the object file version.
+EV_NONE - 0 - Invalid version
+EV_CURRENT - 1 - Current version
+-The value 1 signifies the original file format
+
+e_entry - This member gives the virtual address to which the system first transfers control, thus
+starting the process. If the file has no associated entry point, this member holds zero.
+
+e_phoff - This member holds the program header table’s file offset in bytes. If the file has no
+program header table, this member holds zero.
+
+e_shoff - This member holds the section header table’s file offset in bytes. If the file has no sec-
+tion header table, this member holds zero.
+
+e_flags - This member holds processor-specific flags associated with the file. Flag names take
+the form EF_machine_flag
+
+e_ehsize - This member holds the ELF header’s size in bytes.
+
+e_phentsize - This member holds the size in bytes of one entry in the file’s program header table; all
+entries are the same size.
+
+e_phnum - This member holds the number of entries in the program header table. Thus the pro-
+duct of e_phentsize and e_phnum gives the table’s size in bytes. If a file has no pro-
+gram header table, e_phnum holds the value zero.
+
+e_shentsize - This member holds a section header’s size in bytes. A section header is one entry in
+the section header table; all entries are the same size.
+
+e_shnum - This member holds the number of entries in the section header table. Thus the product
+of e_shentsize and e_shnum gives the section header table’s size in bytes. If a file
+has no section header table, e_shnum holds the value zero.
+
+e_shstrndx - This member holds the section header table index of the entry associated with the sec-
+tion name string table. If the file has no section name string table, this member holds
+the value SHN_UNDEF.
+
+
+
+
+
+ELF Identification
+=====================
+
+-ELF provides an object file framework to support multiple processors, multiple data
+encodings, and multiple classes of machines.
+
+-To support this object file family, the initial bytes of the file
+specify how to interpret the file, independent of the processor on which the inquiry is made and indepen-
+dent of the file’s remaining contents.
+
+e_ident - The initial bytes of an ELF header (and an object file) correspond to the e_ident member.
+
+e_ident[] Indexes - EI_MAG0, EI_MAG1, EI_MAG2, EI_MAG3, EI_CLASS, EI_DATA, EI_VERSION, EI_PAD, EI_NIDENT(16th)
+
+EI_MAG0 to EI_MAG3 - A file’s first 4 bytes hold a ‘‘magic number,’’ identifying the file as an ELF object file.
+0x7f, 'E', 'L', 'F'
+
+EI_CLASS - identifies the file’s class, or capacity.
+ELFCLASSNONE - 0 - Invalid
+ELFCLASS32   - 1 - 32-bit objects
+ELFCLASS64   - 2 - 64-bit objects
+
+Class ELFCLASS32 supports
+machines with files and virtual address spaces up to 4 gigabytes;
+
+
+EI_DATA - specifies the data encoding of the processor-specific data in
+the object file
+ELFDATANONE - 0 - Invalid
+ELFDATA2LSB - 1 
+ELFDATA2MSB - 2
+A file’s data encoding specifies how to interpret the basic objects in a file.
+
+EI_VERSION - specifies the ELF header version number. Currently, this
+value must be EV_CURRENT.
+
+EI_PAD - marks the beginning of the unused bytes in e_ident. These bytes are
+reserved and set to zero; programs that read object files should ignore them.
+
+EI_NIDENT - 16th byte - Size of e_ident[]	
+
+
+
+For 32-bit Intel processors, e_ident requires the following:
+EI_CLASS = ELFCLASS32
+EI_DATA  = ELFDATA2LSB
+
+
+
+
+Sections
+===========
+An object file’s section header table lets one locate all the file’s sections. The section header table is an
+array of Elf32_Shdr structures as described below.
+
+-The ELF header’s e_shoff member gives the byte offset from the beginning of the file to the sec-
+tion header table; e_shnum tells how many entries the section header table contains; e_shentsize
+gives the size in bytes of each entry.
+
+

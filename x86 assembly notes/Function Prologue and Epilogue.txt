@@ -1,0 +1,55 @@
+In assembly language programming, the function prologue is a few lines of code at the beginning of a function, which prepare the stack and registers for use within 
+the function. Similarly, the function epilogue appears at the end of the function, and restores the stack and registers to the state they were in before the 
+function was called.
+
+The prologue and epilogue are not a part of the assembly language itself; they represent a convention used by assembly language programmers, and compilers of 
+many higher-level languages. They are fairly rigid, having the same form in each function.
+
+Function prologue and epilogue also sometimes contain code for buffer overflow protection.
+
+Prologue
+A function prologue typically does the following actions if the architecture has a base pointer (also known as frame pointer) and a stack pointer:
+
+Pushes current base pointer onto the stack, so it can be restored later.
+Assigns the value of stack pointer (which is pointed to the saved base pointer) to base pointer so that a new stack frame will be created on top of the old stack frame.
+Moves the stack pointer further by decreasing or increasing its value, depending on whether the stack grows down or up. On x86, the stack pointer is decreased to make room for the function's local variables.
+Several possible prologues can be written, resulting in slightly different stack configuration. These differences are acceptable, as long as the programmer or compiler uses the stack in the correct way inside the function.
+
+As an example, here′s a typical x86 assembly language function prologue as produced by the GCC
+
+	push ebp
+	mov	ebp, esp
+	sub	esp, N
+The N immediate value is the number of bytes reserved on the stack for local use.
+
+The same result may be achieved by using the enter instruction:
+
+	enter	N, 0
+More complex prologues can be obtained using different values (other than 0) for the second operand of the enter instruction.
+
+
+
+Epilogue
+Function epilogue reverses the actions of the function prologue and returns control to the calling function. It typically does the following actions 
+(this procedure may differ from one architecture to another):
+
+Drop the stack pointer to the current base pointer, so room reserved in the prologue for local variables is freed.
+Pops the base pointer off the stack, so it is restored to its value before the prologue.
+Returns to the calling function, by popping the previous frame's program counter off the stack and jumping to it.
+The given epilogue will reverse the effects of either of the above prologues (either the full one, or the one which uses enter). Under certain calling conventions 
+it is the callee's responsibility to clean the arguments off the stack, so the epilogue can also include the step of moving the stack pointer down or up.
+
+For example, these three steps may be accomplished in 32-bit x86 assembly language by the following instructions:
+
+	mov	esp, ebp
+	pop	ebp
+	ret
+Like the prologue, the x86 processor contains a built-in instruction which performs part of the epilogue. The following code is equivalent to the above code:
+
+	leave
+	ret
+The leave instruction performs the mov and pop instructions, as outlined above.
+
+A function may contain multiple epilogues. Every function exit point must either jump to a common epilogue at the end, or contain its own epilogue. 
+Therefore, programmers or compilers often use the combination of leave and ret to exit the function at any point. (For example, a C compiler would 
+substitute a return statement with a leave/ret sequence).

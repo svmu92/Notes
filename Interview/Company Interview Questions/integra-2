@@ -1,0 +1,11 @@
+S
+In Integra MicroSystems,
+In theory exam they asked.
+1) Write a program to scan multiple lines and then remove the space and
+take only characters ignore digits and special characters.
+
+2) Write a Program to get in command line arguments 1.23 + 56  + 7e5 - 22.7
+    Ignore special characters (alphabets, . , etc )in the numbers and
+produce the sum of the result.
+    For example 12e + 13.7 - 15 should produce the result 12+137-15=144.
+

@@ -1,0 +1,11 @@
+Flat memory model
+Legacy x86 registers
+Flat Memory model
+Mmeory Segmentation
+v86 mode
+x87 FPU
+CISC vs RISC
+Flat model vs Segmented model
+Function Prologue and Epilogue
+
+Branch prediction algorithms

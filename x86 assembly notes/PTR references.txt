@@ -1,0 +1,26 @@
+25. Directives BYTE PTR, WORD PTR, DWORD PTR
+There are times when we need to assist assembler in translating references to data in memory.
+
+For example, instruction
+
+        mov     [ESI], al  ; Store a byte-size value in memory location pointed by ESI
+suggests that an 8-bit quantity should be moved because AL is an 8-bit register.
+
+When instruction has no reference to operand size,
+
+        mov     [ESI], 5   ; Error: operand must have the size specified
+To get around this instance, we must use a pointer directive, such as
+
+        mov     BYTE PTR [ESI], 5  ; Store 8-bit value
+        mov     WORD PTR [ESI], 5  ; Store 16-bit value
+        mov     DWORD PTR [ESI], 5 ; Store 32-bit value
+These instructions require operands to be the same size.
+
+In general, PTR operator forces expression to be treated as a pointer of specified type:
+
+        .DATA
+        num  DWORD   0
+
+        .CODE
+        mov     ax, WORD PTR [num] ; Load a word-size value from a DWORD
+ 

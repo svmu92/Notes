@@ -1,0 +1,47 @@
+Stream Editor (Sed)
+----------------------
+
+- solving complex text processing tasks
+- parses text and transforms it.
+
+- supports regex
+- accepts inputs from files as well as pipes, and standard input streams
+
+- SED can be used in many different ways, such as:
+    Text substitution,
+    Selective printing of text files,
+    In-a-place editing of text files,
+    Non-interactive editing of text files, and many more.
+
+- simple workflow: Read, Execute and Display
+
+Read: SED reads a line from the input stream (file, pipe, or stdin) and stores it in its internal buffer called pattern buffer.
+
+Execute: All SED commands are applied sequentially on the pattern buffer. By default, SED commands are applied on all lines (globally) unless line addressing is specified.
+
+Display: Send the (modified) contents to the output stream. After sending the data, the pattern buffer will be empty.
+
+The above process repeats until the file is exhausted.
+
+
+- Pattern buffer is a private, in-memory, volatile storage area used by the SED.
+
+- By default, all SED commands are applied on the pattern buffer, hence the input file remains unchanged. GNU SED provides a way to modify the input file in-a-place. 
+
+- There is another memory area called hold buffer which is also private, in-memory, volatile storage area. Data can be stored in a hold buffer for later retrieval. At the end of each cycle, SED removes the contents of the pattern buffer but the contents of the hold buffer remains persistent between SED cycles. However SED commands cannot be directly executed on hold buffer, hence SED allows data movement between the hold buffer and the pattern buffer.
+
+- If no input files are provided, then SED accepts input from the standard input stream (stdin).
+
+- If address range is not provided by default, then SED operates on each line.
+
+
+sed commands
+==========
+
+- Display contents of a file "quote.txt" using sed
+	$ sed '' quote.txt
+	
+First SED reads a line from the input file quote.txt and stores it in its pattern buffer. Then it applies SED commands on the pattern buffer. In our case, no SED commands are there, hence no operation is performed on the pattern buffer. Finally it deletes and prints the contents of the pattern buffer on the standard output. 
+
+
+- 

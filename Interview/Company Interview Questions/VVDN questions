@@ -1,0 +1,40 @@
+1. Differences between process and thread.
+2. WAP to do the following:
+
+	res=a*b;
+	
+   without using '*' operator. You are allowed to use bitwise,+,- operators only.
+
+3. Design a system so that irrespective of the polarity of the input , output will always be +ve voltage.
+ans>> full wave rectifier.
+
+4. Design a digital system that will convert a wave of time period of 10ms with 50% duty cycle to a wave of same time period but with 10% duty cycle. 
+ans>> use delay period of 'and' and 'not' gates.
+
+5. I have a transormer of turns ratio as 1:10, can I connect a fan to the secondary if the input is 24V to the primary? What factors will decide how many fans I can connect????
+ans>> yes i can connect provided the supply is 1 phase supply. The factors are:
+		-> since the household wiring are parallel type so, a current divider circuit will be produced if I keep on adding a fan and as a result a point of time 			   the current will become insufficient i.e. will fall below the rated value.
+
+6.
+	a()
+	{
+		a();
+	}
+
+	output??
+
+7. I have five rings. I want to coonect them in a straight line. How many rings I will have to break??
+
+ans>> 2
+
+8. Say a pin of the micro controller is zero, can I make it 1 by connecting another pin from another micro controller which has 1 on it???
+ans>> NO, because it will bypass the the current to ground and it will not enter the uc.
+
+9. External and internal fragmentation??  [Siemens]
+
+10. when do we need a interfacing chip for a peripheral??
+
+
+
+
+THANK YOU VERY VERY VERY MMMMUUUCCCHHH   VECTOR!!!!!!!!!!!!!!!!!!

@@ -1,0 +1,35 @@
+Kernel Stack
+----------------
+
+- Every process has 2 stacks:
+  - User stack
+  - Kernel stack
+ 
+- User space stack grows dynamically.
+
+- Kernel's stack is small and fixed size.
+
+- Size of the per-process kernel stack depends on both the architecture and a compile-time option.
+
+- When the option is enabled, each process is given only a single page - 4KB - on 32-bit machines and 8KB on 64-bit machines.
+
+- Interrupts are given separate stack - Interrupt stack. It consumes only a single page per processor. 
+
+- From kernel 3.15 onwards, kernel stack is 16KB in x86_64.
+
+
+- CONFIG_FRAM_WARN (default 1024) - this config passes an option to the compiler to cause it to emit a warning when a static stack size for a routine is detected that is larger than the specified threshold. (GCC 4.4 or later)
+
+- GCC option used is "-Wframe-larger-than equal to xxx".
+
+- Linux kernel defines stack size 8192 bytes for each process. The sum of stack frames of all active functions should not overflow 8192 bytes.
+
+- The size of the kernel stack is configured during compilation and remains fixed. This is usually two pages (8KB) for each thread. Moreover, additional per-CPU interrupt stacks are used to process external interrupts.
+
+- checkstack.pl - script provided by kernel to check stack space each function in your program uses. It prints out a list of functions and their stack usage, biggest first.
+
+- Like all other architectures, x86_64 has a kernel stack for every active thread. These thread stacks are THREAD_SIZE (2*PAGE_SIZE) big. These stacks contain useful data as long as a thread is alive or a zombie. While the thread is in user space the kernel stack is empty except for the thread_info structure at the bottom.
+
+- The kernel stack by default is 8kb for x86-32 and most other 32-bit systems (with an option of 4k kernel stack to be configured during kernel build), and 16kb on an x86-64 system.
+
+

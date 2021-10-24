@@ -1,0 +1,12 @@
+rep stosd
+
+For ecx repetitions, stores the contents of eax into where edi points to, incrementing or decrementing edi (depending on the direction flag) by 4 bytes each time. 
+Normally, this is used for a memset-type operation.
+
+Usually, that instruction is simply written rep stosd. Experienced assembly coders know all the details mentioned above just by seeing that. :-)
+
+ETA for completeness (thanks PhiS): Each iteration, ecx is decremented by 1, and the loop stops when it reaches zero. For stos, the only thing you will observe is 
+that ecx is cleared at the end. But, for scas or the like, where the repz/repnz prefixes are used, ecx can be greater than zero if the operation stopped before 
+exhausting ecx bytes/words/whatevers.
+
+Before you ask, scas is used for implementing strchr-type operations

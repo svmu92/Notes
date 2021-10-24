@@ -1,0 +1,374 @@
+ELf format
+==============
+
+ELF file types:
+- ET_NONE
+- ET_REL - relocatable file(object file) - PIC
+- ET_EXEC - executable. contains entry point of programs
+- ET_DYN - shared object. dynamically linkable object file aka shared libraries.
+- ET_CORE - core dump file - dump of a full process image at the time of program crash or SEGV fault. Readable by GDB.
+
+
+ELF header
+----------
+
+$ readelf -h - header of an ELF file.
+
+- starts at 0 offset.
+- marks the ELF type, architecture, and the entry point address where execution is to begin, provides offset to other types of
+ELF headers - section and program headers.
+
+#define EI_NIDENT 16
+           typedef struct {
+               unsigned char e_ident[EI_NIDENT];
+               uint16_t      e_type;
+               uint16_t      e_machine;
+               uint32_t      e_version;
+               ElfN_Addr     e_entry;
+               ElfN_Off      e_phoff;
+               ElfN_Off      e_shoff;
+               uint32_t      e_flags;
+               uint16_t      e_ehsize;
+               uint16_t      e_phentsize;
+               uint16_t      e_phnum;
+               uint16_t      e_shentsize;
+               uint16_t      e_shnum;
+               uint16_t      e_shstrndx;
+           } ElfN_Ehdr;
+           
+
+
+ELF Program headers
+---------------------
+- describes segments within a binary
+
+- segments describe the memory layout of an executable on a disk and how it should translate to memory.
+
+- can be accessed by referencing the offset found in the inital ELF header member called "e_phoff" (program header table offset)
+	ElfN_Off e_phoff;
+
+- five common program header types.
+
+- "Elf32_Phdr" - structure that makes up a program header entry in the program header table of a 32-bit ELF executable.
+
+typedef struct {
+    uint32_t   p_type;   (segment type)
+    Elf32_Off  p_offset; (segment offset)
+    Elf32_Addr p_vaddr;   (segment virtual address)
+    Elf32_Addr p_paddr;    (segment physical address)
+    uint32_t   p_filesz;   (size of segment in the file)
+    uint32_t   p_memsz; (size of segment in memory)
+    uint32_t   p_flags; (segment flags, I.E execute|read|read)
+    uint32_t   p_align;  (segment alignment in memory)
+  } Elf32_Phdr;
+  
+
+Program header types - "p_type"
+1) PT_LOAD:
+	- an executable will always have atleast one "PT_LOAD" type segment.
+	- describes a loadable segmen, meaning segment will be loaded/mapped to memory.
+	- and executable with dynamic linking wll contain two loadable segments of type "PT_LOAD"
+		- the text segment for code
+		- data segment for global variables and dynamic linking information
+	- the loadable segments are going to be mapped into memory and aligned in memory by the value stored in "p_align"
+	- the text segment will generally have segment permissions set as "PF_X | PF_R" (READ + EXECUTABLE)
+	- the data segment will generally have segment permissions set to "PF_W | PF_R" (READ + WRITE)
+	- program header's segment flags (p_flags).
+
+2) PT_DYNAMIC:
+	- Phdr for dynamic segment
+	- specific to executables that are dynamically linked and contains info necessary for dynamic linker
+	- contains tagged values and pointers including:
+		- list of shared libraries that are to be linked at runtime
+		- address/location of the Global offset table (GOT) 
+		- information about relocation entries
+	- Tag list:
+		Tag		Description
+		DT_HASH	Address of symbol table hash
+		DT_STRTAB	Address of string table
+		DT_SYMTAB	Address of symbol table
+		DT_RELA	Address of Rela relocs table
+		DT_RELASZ	Size in bytes of Rela table
+		DT_RELAENT	Size in bytes of Rela table entry
+		DT_STRSZ	Size in bytes of string table
+		DT_SYMENT	Size in bytes of a symbol table entry
+		DT_INIT	Address of initialization function
+		DT_FINI	Address of termination function
+		DT_SONAME	String table offset to name of shared object
+		DT_RPATH	String table offset to library search path
+		DT_SYMBOLIC	Alert linker to search this shared object before the execution for symbols
+		DT_REL		Address of Rel relocs table
+		DT_RELSZ	Size in bytes of Rel table
+		DT_RELENT	Size in bytes of Rel table entry
+		DT_PLTREL	Type of reloc the PLT refers (rela or Rel)
+		DT_DEBUG	Undefined use for debugging
+		DT_TEXTREL	Absence of this indicates that no relocs should apply to a nonwritable segment
+		DT_JMPREL	Address of reloc entries solely for the PLT
+		DT_BIND_NOW	Instructs the dynamic linker to process all relocs before transferring control to the executable
+		DT_RUNPATH	String table offset to library search path
+		
+	- dynamic segment contains a series of structures that hold relevant dynamic linking information.
+	
+	typedef struct {
+	Elf32_Sword    d_tag;
+	    union {
+		Elf32_Word d_val;
+		Elf32_Addr d_ptr;
+	    } d_un;
+	} Elf32_Dyn;
+	extern Elf32_Dyn _DYNAMIC[];
+	
+	- "d_tag" memeber controls the interpretation of "d_un".
+	
+PT_NOTE:
+	- contain auxiliary information that is pertinent to a specific vendor or system.
+	- special information that other programs will check for conformance, compatibility and so on.
+	- "PT_NOTE" and section type "SHT_NOTE" can be used for this.
+
+
+PT_INTERP:
+	- contains only the location and size to a null terminated string describing where the program interpreter is
+		eg: /lib/linux-ld.so.2 - dynamic linker or program interpreter
+
+PT_PHDR:
+	- contains the location and size of program header the table itself.
+	- The Phdr table contains all of the program headers describing the segments of the file.
+	
+	$ readelf -l <filename> - to view the Phdr table.
+	
+
+
+ELF Section Headers
+------------------
+
+- Segments are necessary for program execution, and within each segment, there is code or data divided into sections.
+
+- A section header table exists to reference the location and size of these sections and is primarily for linking and debugging purposes
+
+- Not necessary for program execution
+
+- If section header is not there, it doesn't mean sections are not there, it means less information is available for debuggers and disassembler programs.
+
+- Each section contains either code or data of some type.
+
+- All of GNU's binutils depend on section headers to locate symbol information.
+
+typedef struct {
+    uint32_t   sh_name; // offset into shdr string table for shdr name
+    uint32_t   sh_type; // shdr type I.E SHT_PROGBITS
+    uint32_t   sh_flags; // shdr flags I.E SHT_WRITE|SHT_ALLOC
+    Elf32_Addr sh_addr;  // address of where section begins
+    Elf32_Off  sh_offset; // offset of shdr from beginning of file
+    uint32_t   sh_size;   // size that section takes up on disk
+    uint32_t   sh_link;   // points to another section
+    uint32_t   sh_info;   // interpretation depends on section type
+    uint32_t   sh_addralign; // alignment for address of section
+    uint32_t   sh_entsize;  // size of each certain entries that may be in section
+} Elf32_Shdr;
+
+
+Section types:
+
+1) .text
+	- contains program code instructions
+	- section type - "SHT_PROGBITS"
+	- this section will be in the range of text segment
+
+2) .rodata
+	- contains read-only data such as strings from a line of C code like "Hello World"
+	- exist in read-only segment of an executable
+	- within the text segment 
+	- section type - "SHT_PROGBITS"
+	
+3) .plt
+	- procedure linkage table (PLT) 
+	- contains code necessary for the dynamic linker to call functions that are imported from shared libraries.
+	- resides in the text segment and contains code, so type "SHT_PROGBITS"
+	
+4) .data
+	- not to be confused with data segment
+	- exist within data segment
+	- contain data such as initialized global variables.
+	- contains program variable data, so type "SHT_PROGBITS"
+	
+5) .bss
+	- contains uninitialized global data 
+	- part of data segment
+	- size 4 bytes, which represents the section itself.
+	- type "SHT_NOBITS"
+
+6) .got.plt
+	- Global Offset Table (GOT)
+	- works together with PLT to provide access to imported shared library functions 
+	- modified by dynamic linker at runtime.
+	- type "SHT_PROGBITS"
+
+7) .dynsym
+	- contains dynamic symbol information imported from shared libraries.
+	- contained within text segment 
+	- type "SHT_DYNSYM"
+	
+8) .dynstr
+	- contains the string table for dynamic symbols 
+	- name of each symbol in a series of null terminated strings
+
+9) .rel.* 
+	- contains information about how parts of an ELF object or process image need to be fixed up or modified at linking or runtime.
+	- type "SHT_REL"
+	
+10) .hash
+	- .gnu.hash
+	- contains a hash table for symbol lookup
+	- h = ((h << 5) + h) + c
+
+11) .symtab
+	- contains symbol information of type "ElfN_Sym"
+	- type "SHT_SYMTAB"
+
+12) .strtab
+	- contains the symbol string table that is referenced by the "st_name" entries within the "ElfN_Sym" structs of ".symtab"
+	- type "SHT_STRTAB" since it contains a string table
+	
+13) .shstrtab
+	- contains the section header string table that is a set of null terminated strings containing the names of each section, such as ".text", ".data" and so on
+	- pointed to by the Elf file header entry called "e_shstrndx" that holds the offset of ".shstrtab"
+	- type "SHT_STRTAB" since it contains a string table
+
+14) .ctors and .dtors 
+	- contain function pointers to initialization and finalization code that is to be executed before and after the actual main().
+	
+	
+
+The text segments will be as follows:
+ - .text
+ - .rodata
+ - .hash
+ - .dynsym
+ - .dynstr
+ - .plt
+ - .rel.got
+ 
+The data segment will be as follows:
+ - .data
+ - .dynamic
+ - .got.plt
+ - .bss
+
+
+Relocatable (ET_REL) - 12 section  headers, no program headers
+	Note: Linux kernel modules (.ko) are ET_REL objects have program headers because they are directly loaded into memory and relocated on the fly.
+
+Executable - 30 section headers, program headers present
+
+
+
+ELF Symbols
+-------------
+- Symbols are a symbolic reference to some type of data or code such as global variables or function.
+- eg: printf() will have a symbol table entry that points to it in the dynamic symbol table - ".dynsym"
+
+- In shared libraries and dynamically linked executables, there exist two symbol tables - ".dynsym" and ".symtab"
+
+- ".dynsym" - contains global symbols that reference symbols from an external source, such as libc functions like printf. Flags - A (ALLOC)
+- ".symtab" - contains all the symbols in ".dynsym" as well as the local symbols, such as global variables or local functions. No Flags
+
+ALLOC - section will be allocated at runtime and loaded in to memory.
+
+- ".symtab" is not loaded into memory as it is not necessary for runtime. Only for debugging and linking purposes.
+- ".dynsym" contains symbols that can be resolved only at runtime. necesary for execution
+
+
+ELF symbol table entry for 64-bit files.
+
+typedef struct {
+    uint32_t      st_name;
+    unsigned char st_info;
+    unsigned char st_other;
+    uint16_t      st_shndx;
+    Elf64_Addr    st_value;
+    Uint64_t      st_size;
+} Elf64_Sym;
+
+- "sh_entsize" (section header entry size) for ".dynsym" and ".symtab" sections = sizeof(ElfN_Sym);
+
+
+Fields:
+1) st_name - contains an offset into the symbol table's string table(located in either ".dynstr" or ".strtab"), where the name of the symbol is located, such as "printf"
+
+2) st_value - holds the value of the symbol (either an address or offset to its location)
+
+3) st_size - contains the size of the symbol, such as the size of a global function ptr.
+
+4) st_other - defines the symbol visibility.
+
+5) st_shndx - every symbol table entry is defined in relation to some section. Holds the relevant section header table index
+
+6) st_info - specifies the symbol type and binding attributes. The symbol types start with STT whereas the symbol bindings start with STB.
+	Symbol types:
+		STT_NOTYPE - undefined type
+		STT_FUNC - associated with a function or other executable code
+		STT_OBJECT - associated with a data object.
+	Symbol bindings:
+		STB_LOCAL - local symbols are not visible outside the object file containing their definition
+		STB_GLOBAL - global symbols are visible to all object files being combined. One file's definition of a global symbol will satisfy another file's undefined reference to the same symbol.
+		STB_WEAK - binding is weak and maybe overriden by another symbol with same name that is not marked as STB_WEAK.
+		
+	There are macros for packing and unpacking the binding and type fields:
+		ELF32_ST_BIND(info) or ELF64_ST_BIND(info) - extract a binding from an "st_info" value
+		ELF32_ST_TYPE(info) or ELF64_ST_TYPE(info) - extract a type from an "st_info" value 
+		ELF32_ST_INFO(bind,type) or ELF64_ST_INFO(bind,type) - convert a binding and a type into an st_info value
+		
+$ readelf -s <object file> | egrep "function name" 
+	- to view the symbol table entries 
+
+
+
+ELF Relocations
+---------------
+
+Relocation - process of connecting symbolic references with symbolic definitions.
+
+- relies on symbols and sections
+
+- relocation records contain information about how to patch the code related to a given symbol.
+
+
+64-bit relocation entry
+
+typedef struct {
+        Elf64_Addr r_offset;
+        Uint64_t   r_info;
+} Elf64_Rel;
+
+
+Some relocation entries require an addend
+
+typedef struct {
+        Elf64_Addr r_offset;
+        uint64_t   r_info;
+        int64_t    r_addend;
+} Elf64_Rela;
+
+
+	r_offset - location that requires relocation action.
+	r_info - gives both the symbol table index with respect to which the relocation must be made and the type of relocation to apply.
+	r_addend - specifies a constant addend used to compute the value stored in the relocatable field.
+	
+- An implicit addend occurs when the relocation records are stored in ElfN_Rel type structures that don't contain a "r_addend" field.
+
+- In object file, you can see call instruction with implicit addend
+	addend value - 0xfffffffc
+			= -(4) = (sizeof(uint32_t))
+
+- There are different relocation tpyes. 
+	For ex: R_386_PC32. 
+- Each relocation type requires a different computation on the relocation target being modified.
+	R_386_PC32 modifies the target with S + A - P
+						S - value of the symbol whose index resides in the relocation entry
+						A - addend found in the relocation entry
+						P - place(section offset or address) of the storage unit being relocated.
+
+- An address may be computed into an offset with the following computation:
+	address – address_of_call – 4 (Where 4 is the length of the immediate operand to the call instruction, which is 32bits).
+	
+

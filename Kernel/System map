@@ -1,0 +1,33 @@
+In Linux, the System.map file is a symbol table used by the kernel.
+
+A symbol table is a look-up between symbol names and their addresses in memory. A symbol name may be the name of a variable or the name of a function. The System.map is required when the address of a symbol name, or the symbol name of an address, is needed. It is especially useful for debugging kernel panics and kernel oopses. The kernel does the address-to-name translation itself when CONFIG_KALLSYMS is enabled so that tools like ksymoops are not required.[1] 
+
+
+Symbol types
+
+The character between the address and the symbol (separated by spaces) is the type of a symbol. The nm utility program on Unix systems list the symbols from object files. The System.map is directly related to it, in that this file is produced by nm on the whole kernel program – just like nm lists the symbols and their types for any small object programs.[4]
+
+Some of these types are:[4]
+
+    A for absolute
+    B or b for uninitialized data section (called BSS)
+    D or d for initialized data section
+    G or g for initialized data section for small objects (global)
+    i for sections specific to DLLs
+    N for debugging symbol
+    p for stack unwind section
+    R or r for read only data section
+    S or s for uninitialized data section for small objects
+    T or t for text (code) section
+    U for undefined
+    V or v for weak object
+    W or w for weak objects which have not been tagged so
+    - for stabs symbol in an a.out object file
+    ? for "symbol type unknown"
+
+Filesystem location
+
+After building the Linux kernel, System.map is located in the root of the source directory. However, some further software installation steps expect to locate the file elsewhere:[5]
+
+    as /boot/System.map-$(uname -r)
+    building SVGALib expects to find /lib/modules/$(uname -r)/build/System.map

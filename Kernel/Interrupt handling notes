@@ -1,0 +1,32 @@
+
+Interrupts
+------------
+- Interrupts enable hardware to signal to the processor.
+
+- An interrupt is physically produced by electronic signals originating from hardware
+devices and directed into input pins on an interrupt controller, a simple chip that multi-
+plexes multiple interrupt lines into a single line to the processor. Upon receiving an inter-
+rupt, the interrupt controller sends a signal to the processor.The processor detects this sig-
+nal and interrupts its current execution to handle the interrupt.The processor can then
+notify the operating system that an interrupt has occurred, and the operating system can
+handle the interrupt appropriately.
+
+- Different devices can be associated with different interrupts by means of a unique
+value associated with each interrupt. In turn,
+the operating system can service each interrupt with its corresponding handler.
+
+- Interrupts associated with devices on the PCI bus, for example, generally
+are dynamically assigned.
+
+
+- The function the kernel runs in response to a specific interrupt is called an interrupt handler
+or interrupt service routine (ISR).
+- They run in a special context called interrupt context.This special context is
+occasionally called atomic context because, code executing in this context is
+unable to block.
+
+- The processing of interrupts is split into two parts, or halves.The interrupt handler is the top half.
+The top half is run immediately upon receipt of the interrupt and performs only the
+work that is time-critical, such as acknowledging receipt of the interrupt or resetting the
+hardware.Work that can be performed later is deferred until the bottom half.The bottom
+half runs in the future, at a more convenient time, with all interrupts enabled.

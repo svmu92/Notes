@@ -1,0 +1,74 @@
+Explaining the container_of() macro
+
+
+offsetof(structure,member) ------> returns the offset of member from the beginning of the structure in bytes
+
+zero pointer dereference -----> get the type of the member.
+	eg: (struct s*)0->member = type of member
+
+typeof(member) ----> It takes one argument and returns its type. ---- basically, the number of bytes the member occupies in memory.
+
+struct cdev {
+	struct kobject kobj;
+	struct module *owner;
+	const struct file_operations *ops;
+	struct list_head list;
+	dev_t dev;
+	unsigned int count;
+}
+
+
+Now the definition of container_of() macro
+
+#define container_of(ptr,type,member) ({	\
+					const typeof(((type* )0)->member) *__mptr = ptr; \
+					(type *) ((char *)__mptr - offsetof(type,member));\
+					})
+
+
+We have :
+
+struct msg_device
+{
+	struct cdev mycdev;
+	char kernel_buffer[MAX_SIZE];
+};
+ 
+
+Now the call is:
+struct msg_device *my_device = container_of(inode->i_cdev, struct msg_device, mycdev);
+
+
+expands to:
+
+	const typeof(((struct msg_device *)0)->mycdev) *__mptr =icdev;
+which when substituted:
+
+
+	const struct cdev *__mptr = i_cdev;	//__mptr is a pointer of type struct cdev that points to inode->cdev;
+
+Now icdev = cdev of our file which is contained in msg_device structure. Lets call it our_cdev.
+	
+2nd line
+
+	(struct msg_device*) ((char*)__mptr - offsetof(struct msg_device,mycdev))
+	=(struct msg_device*) ((char*)(our_cdev) - 0))
+	=(struct msg_device*) (char*)(our_msg_device structure)
+
+
+
+
+container_of(drv, struct i2c_driver, driver)
+=
+i2c_drv = ({
+        const typeof( ((struct i2c_driver *)0)->driver) *__mptr = drv;
+        (struct i2c_driver *)( (char *)__mptr - offsetof(struct i2c_driver, driver));
+})
+
+remember that driver is a variable within the i2c_driver function
+
+=
+i2c_drv = ({
+        const struct device_driver *__mptr = drv;
+        (struct i2c_driver *)( (char *)__mptr - 0x20);
+})

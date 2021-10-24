@@ -1,0 +1,48 @@
+vi Commands
+
+Esc - commands mode
+i - insert
+a - append/add in between
+o - To open a line below the current one and begin inserting text
+x - deletes the character under the cursor
+dd - delete the line
+p - Text that is deleted may be reinserted
+P - insert the text before the current line
+u - undo latest change
+dw - delete the word beneath the cursor
+R - overwrites the text beginning at the cursor
+r - replaces the single character under the cursor
+~ - changes the case of the letter under the cursor from upper- to lower-case, and vice versa.
+cw - change word 	
+w - moves cursor to the beginning of the next word
+b - moves cursor to the beginning of the current word
+0 - moves the cursor to the beginning of the current line
+$ - moves the cursor to the end of the current line
+Ctrl-F - moves the cursor one screen forward
+Ctrl-B - moves it one screen backward
+G - move the cursor to the end of the file
+'n'G-move to an arbitrary line
+10G - move the cursor to line 10 in the file
+/'pattern' - search first occurence of pattern in the file
+?'pattern' - search from end of file (backwards)
+/[A-Z] - search for the next uppercase letter
+d$ - delete everything from the cursor to the end of the line
+dG - delete everything from the cursor to the end of the file
+
+: - enter ex mode from command mode
+:w - to write the file being edited
+:wq (ZZ) - writes the file and exits vi
+:q! - quit without saving
+:q - quit will quit vi if modifications have been saved
+:e file - edit another file
+:r file - inserts contents of file after the current line
+
+:! - for running shell commands
+ eg - :!ls -l
+:r! - includes the output of shell command in the buffer
+
+
+:[x,y]s/ pattern/replacement/flags - 
+	searches for pattern between lines x and y in the buffer, and replaces instances of pattern with the replacement text. pattern is a regular expression; replacement is literal text but can contain several special characters to refer to elements in the original pattern .
+
+

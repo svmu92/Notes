@@ -1,0 +1,262 @@
+Process
+---------
+fork — Generates an exact copy of the current process that differs from the parent process
+only in its PID (process identification). After the system call has been executed, there are two
+processes in the system, both performing the same actions. The memory contents of the ini-
+tial process are duplicated — at least in the view of the program. Linux uses a well-known
+technique known as copy on write that allows it to make the operation much more efficient
+by deferring the copy operations until either parent or child writes to a page.
+
+
+exec — Loads a new program into an existing content and then executes it. The memory
+pages reserved by the old program are flushed, and their contents are replaced with new
+data. The new program then starts executing.
+
+
+threads - lightweight processes.
+
+Linux provides the clone method to generate threads.
+
+
+Namespaces - beneficial for hosting providers. Instead of setting up
+one physical machine per customer, they can instead use containers implemented with namespaces to
+create multiple views of the system where each seems to be a complete Linux installation from within
+the container and does not interact with other containers: They are separated and segregated from each
+other. Every instance looks like a single machine running Linux, but in fact, many such instances can
+operate simultaneously on a physical machine. This helps use resources more effectively. In contrast to
+full virtualization solutions like KVM, only a single kernel needs to run on the machine and is responsible
+to manage all containers.
+
+
+
+Virtual address space
+---------------------
+
+The word length of the CPU determines the maximum size of the address space that can be managed. 
+
+Virtual adress space = 2^32 or 2^64.
+
+
+Virtual address divided into two - kernel address space and user address space.
+
+User address space 	- 0 to TASK_SIZE
+Kernel address space	- TASK_SIZE to 2^X (X=32 or 64)
+
+
+As a result of address space virtualization,
+each user process thinks it has 3 GiB of memory. The userspaces of the individual system processes are
+totally separate from each other.
+
+
+All modern CPUs offer several privilege levels in which processes can
+reside. There are various prohibitions in each level including, for example, execution of certain assembly
+language instructions or access to specific parts of virtual address space.
+
+
+Linux uses only two different modes —
+kernel mode and user mode. The key difference between the two is that access to the memory area above
+TASK_SIZE — that is, kernel space — is forbidden in user mode. User processes are not able to manipulate
+or read the data in kernel space. Neither can they execute code stored there.
+
+
+Kernel executes code:
+- on behalf of user processes when system calls are made, and can sleep.
+- in interrupt context to handle interrupts, and must not sleep.
+- in kernel threads , where they can sleep, for various purposes like data synchronization of RAM and block devices
+
+
+Kernel use page tables to allocate virtual addresses to physical addresses. Whereas
+virtual addresses relate to the combined user and kernel space of a process, physical addresses are used
+to address the RAM actually available.
+
+
+Paging
+-------
+
+The virtual address space is divided into portions of equal size
+by the kernel. These portions are known as pages. 
+
+Physical memory is also divided into pages of the same size ---> frames
+
+Not all pages of the virtual address spaces are linked with a page frame. This
+may be because either the pages are not used or because data have not been loaded into memory because
+they are not yet needed. It may also be that the page has been swapped out onto hard disk and will be
+swapped back in when needed.
+
+
+Page tables - used to map virtual address space to physical address space.
+
+To reduce the size of page tables and to allow unneeded areas to be ignored, the architectures split each
+virtual address into multiple parts.
+
+
+	---------------------------------------------
+	|    PGD   |   PMD   |   PTE   |   Offset   |
+	---------------------------------------------
+
+The first part of the virtual address is referred to as a page global directory or PGD. It is used as an index
+in an array that exists exactly once for each process. Its entries are pointers to the start of further arrays
+called page middle directories or PMD.
+
+Once the corresponding array has been found by reference to the PGD and its contents, the PMD is used
+as an index for the array. The page middle directory likewise consists of pointers to further arrays known
+as page tables or page directories.
+
+The PTE (or page table entry) part of the virtual address is used as an index to the page table. Mapping
+between virtual pages and page frames is achieved because the page table entries point to page frames.
+
+The last part of the virtual address is known as an offset. It is used to specify a byte position within the
+page; after all, each address points to a uniquely defined byte in address space.
+
+
+- A special part of the CPU known as a memory management unit (MMU) is optimized to per-
+form referencing operations.
+
+- The addresses that occur most frequently in address translation are held in a fast CPU cache
+called a Translation Lookaside Buffer (TLB). Translation is accelerated because the address data
+in the cache are immediately available without needing to access the page tables and there-
+fore the RAM.
+
+The IA-32 architecture uses a two-level-only method to map virtual addresses to physical addresses.
+The size of the address space in 64-bit architectures (Alpha, Sparc64, IA-64, etc.) mandates a three-level
+or four-level method, and the architecture-independent part of the kernel always assumes a four-level
+page table.
+
+
+When it allocates RAM, the kernel must keep track of which pages have already been allocated and which
+are still free in order to prevent two processes from using the same areas in RAM.
+
+The kernel can allocate only whole page frames. Dividing memory into smaller
+portions is delegated to the standard library in userspace. This library splits the page frames received
+from the kernel into smaller areas and allocates memory to the processes.
+
+
+Buddy system
+-----------------
+To quickly detect where in memory continuous ranges of pages are still available, 
+the kernel employs an old, but proven technique: The buddy system.
+
+Free memory blocks in the system are always grouped as two buddies. The buddies can be allocated
+independently of each other; if, however, both remain unused at the same time, the kernel merges them
+into a larger pair that serves as a buddy on the next level.
+
+All buddies of the same size (1, 2, 4, 8, 16, . . . pages) are managed by the kernel in a special list. 
+
+Fragmentation - The frequent allocation and release of page frames may lead to a situation
+in which several page frames are free in the system but they are scattered throughout physical address
+space — in other words, there are no larger contiguous blocks of page frames, as would be desirable for
+performance reasons.
+
+Single reserved pages that sit in the middle of an otherwise large continuous free range can
+eliminate coalescing of this range very effectively.
+
+
+
+The Slab Cache
+----------------
+It can be used to allocate memory in two ways:
+
+1. For frequently used objects, the kernel defines its own cache that contains only instances of
+the desired type. Each time one of the objects is required, it can be quickly removed from the
+cache (and returned there after use); the slab cache automatically takes care of interaction
+with the buddy system and requests new page frames when the existing caches are full.
+
+2. For the general allocation of smaller memory blocks, the kernel defines a set of slab caches
+for various object sizes that it can access using the same functions with which we are familiar
+from userspace programming; a prefixed k indicates that these functions are associated with
+the kernel: kmalloc and kfree .
+
+
+Swapping
+-----------
+Swapping enables available RAM to be enlarged virtually by using disk space as extended memory.
+Infrequently used pages can be written to hard disk when the kernel requires more RAM.
+Once the data are actually needed, the kernel swaps them back into memory. The concept of page faults is used to make
+this operation transparent to applications. Swapped-out pages are identified by a special entry in the
+page table. When a process attempts to access a page of this kind, the CPU initiates a page fault that is
+intercepted by the kernel. The kernel then has the opportunity to swap the data on disk into RAM. The
+user process then resumes. Because it is unaware of the page fault, swapping in and out of the page is
+totally invisible to the process.
+
+
+Page reclaim is used to synchronize modified mappings with underlying block devices.
+
+
+
+Timing
+-------
+Jiffies - jiffies_64, jiffies(32-bit)
+- incremented periodically at constant time intervals (HZ).
+
+
+System Calls
+-------
+- POSIX system calls.
+
+- Traditional system calls are classiffied into various categories:
+	- Process managment
+	- Signals
+	- Files
+	- Directories and Filesystem
+	- Protection Mechanisms
+	- Timer functions
+
+Device Drivers, Block and character devices
+-------------------------------
+
+- Modems are character devices
+- Hard disks are block devices
+
+
+Networks
+----------
+- Network cards
+- Cannot be addressed using device files
+- Linux use sockets, these act as agents between the application, file interface, and network implementation of the kernel
+
+
+Filesystems
+-----------
+- Hierarchical fs are used.
+- ext2, ext3, vfat, xfs, reiserfs etc.
+
+- VFS - layer to abstract the special features of the various low-level filesystems.
+
+
+Modules
+-------
+- dynamically add functionality to kernel at runtime.
+
+- loading binary-only modules taints kernel.
+
+
+Caches
+------
+- Page cahce - kernel implements access to block devices by means of page memory mappings.
+
+- Buffer cache - used to cache data that are not organized to pages. 
+
+
+List Handling
+-----------
+- handling doubly linked lists.
+
+<list.h>
+struct list_head{
+	struct list_head *next, *prev;
+};
+
+struct task_struct{
+...
+	struct list_head run_list;
+};
+
+- not type-safe. the data structures to be listed must contain an element of type struct list_head.
+
+- LIST_HEAD(list_name) - initialization.
+
+
+- "struct list_head" is called a list element when it is held in a data structure.
+- An element that serves as the starting point is called a list head.
+
+

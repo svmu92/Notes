@@ -1,0 +1,179 @@
+Userspace
+=============
+$ date
+Sunday 04 July 2021 07:27:21 PM IST
+
+$ uptime
+ 19:23:21 up 1 day, 23:45,  1 user,  load average: 0.71, 0.46, 0.41
+
+Load average - average number of jobs in your system's runqueue for 1 min, 5 min and 15 mins
+	eg: load average: 0.71, 0.46, 0.41
+
+- If the load average is more than the CPU count, then there is a performance problem.
+- uptime reads from /proc/uptime and /proc/loadavg
+
+$ cat /proc/uptime 
+172320.41 95742.97
+- 1st value is uptime in seconds
+- 2nd value is total time spent by all CPUs in idle process
+
+$ cat /proc/loadavg 
+0.23 0.43 0.43 1/937 59159
+- 4th field - 	1st is the number of currently executing kernel scheduling entities (processes, threads)
+		2nd is the number of kernel scheduling entitites that currently exist on the system
+- 5th field - pid of the process most recently created on the system
+
+
+Epoch Time
+-----
+- number of seconds that have elapsed since Jan 1 1970
+
+$ date +%s
+1625407659
+
+In C program,
+
+#include <time.h>
+time_t time(time_t *tloc);
+
+time() - returns the number of seconds since Epoch
+
+
+ctime()
+----
+#include <time.h>
+char *ctime(const time_t *timep);
+
+- returns the string representing the localtime based on the argument timer.
+
+
+
+gettimeofday()
+--------------
+- returns the wall clock time and timezone.
+
+#include <sys/time.h>
+int gettimeofday(struct timeval *tv, struct timezone *tz);
+
+- tv gives the number of seconds and microseconds since the Epoch.
+
+
+struct timeval{
+	time_t tv_sec;		/* seconds */
+	useconds_t tv_usec;	/* microseconds */
+};
+
+struct timezone{
+	int tz_minuteswest;	/* minutes west of Greenwich */
+	int tz_dsttime;	/* type of DST correction */
+};
+
+NOTE: struct timezone is obsolete. Specify NULL
+
+NOTE: Using gettimeofday(), you shouldnot measure the elapsed time since that time can be changed.
+
+NTP - Network Time Protocol - queries time from network
+$ sudo systemctl start systemd-timesyncd.service
+$ sudo systemctl stop systemd-timesyncd.service
+
+
+To measure elapsed time safely, use clock_gettime()
+
+clock_gettime()
+--------------
+- ticks continuously irrespective of system time changes - monotonic clock.
+
+int clock_gettime(clockid_t clk_id, struct timespec *tp);
+- retrieve time from RTC.
+
+struct timespec{
+	time_t tv_sec;
+	long tv_nsec;
+};
+
+- Precision of nanoseconds
+
+clockid_t - clocks can be identified using id.
+
+- For monotonic clocks, clockid_t = CLOCK_MONOTONIC
+
+- Another clock is CLOCK_BOOTTIME. It measures the time spent in suspend() also.
+
+- CLOCK_MONOTONIC_RAW - provides access to raw hardware-based time that is not subject to NTP adjustments.
+	This is preferable where more accurate time is wanted over very short intervals.
+
+- CLOCK_REALTIME - represents the real time/wall time in the system. Subject to NTP adjustments.
+
+- CLOCK_PROCESS_CPUTIME_ID - measures CPU time consumed by all threads in the process.
+	This gives the actual time spent by the process on CPU
+	
+- CLOCK_THREAD_CPUTIME_ID - measures CPU time consumed by the thread.
+
+
+
+clock_settime()
+---------------
+- sets the time of the specified clock clk_id
+
+int clock_settime(clockid_t clk_id, const struct timespec *tp);
+
+
+
+clock_getres()
+-------------
+- finds the resolution of the specified clock clk_id.
+
+int clock_getres(clockid_t clk_id, struct timespec *res);
+
+
+
+
+
+Kernel space
+===============
+
+- The frequency of the timer interrupt is programmed on system boot based on static preprocessor define HZ.
+- Value of HZ differs for each supported arch.
+- defined in <asm/param.h>
+	#define HZ 	CONFIG_HZ
+	
+- check in terminal
+	$ grep 'CONFIG_HZ=' /boot/config-$(uname -r)
+
+
+
+jiffies
+------
+- global variable in kernel that holds the number of ticks/timer interrupts from system boot.
+- every time a timer interrupt occurs, the value of an internal kernel counter is incremented.
+
+- Defined in <linux/jiffies.h>
+	extern unsigned long volatile jiffies;
+	
+- For example, in 4s, jiffies will increase by 1000 if CONFIG_HZ=250.
+
+- As jiffies is unsigned long, size of jiffies will depend on architecture.
+	32-bit - 4 bytes
+	64-bit - 8 bytes
+
+- But on all architectures, jiffies is a 64-bit variable to avoid overflow.
+<linux/jiffies.h>
+extern u64 jiffies_64;
+
+- On 32-bit architectures, access to 64-bit variable cannot be done atomically, so unsigned long long is not used.
+
+- linker script used to link the main kernel - arch/x86/kernel/vmlinux.lds.S on x86 - overlays the jiffies variable over the start of the jiffies_64 variable.
+
+- get_jiffies_64() can be used to read the full 64-bit value.
+
+- On 64-bit architectures, jiffies and get_jiffies_64() returns same value.
+
+- jiffies will overflow. To avoid wraparound issue in your code when using jiffies, kernel provides 4 macros.
+	1) time_after(a,b)
+	2) time_before(a,b)
+	3) time_after_eq(a,b)
+	4) time_before_eq(a,b)
+
+
+
+

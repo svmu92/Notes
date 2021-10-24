@@ -1,0 +1,52 @@
+The configuration mechanism is called Kconfig, and the build system that it integrates with is called Kbuild. 
+Both are documented in Documentation/kbuild. 
+Kconfig/Kbuild is used in a number of other projects as well as the kernel, including Crosstool-NG, U-Boot, Barebox, and BusyBox.
+
+
+The configuration options are declared in a hierarchy of files named Kconfig, using a syntax described in Documentation/kbuild/kconfig-language.txt
+
+The Kconfig files consist largely of menus, delineated by menu and endmenu keywords. Menu items are marked by the keyword config. 
+
+
+Datatypes:
+bool: Either y or not defined.
+tristate: Used where a feature can be built as a kernel module or built into the main kernel image. The values are m for a module, y to be built in, and not defined if the feature is not enabled.
+int: An integer value using decimal notation.
+hex: An unsigned integer value using hexadecimal notation.
+string: A string value.
+
+There may be dependencies between items, expressed by the depends on construct.
+
+There are also reverse dependencies; the select keyword enables other options if this one is enabled. 
+The Kconfig file in arch/$ARCH has a large number of select statements that enable features specific to the architecture.
+
+There are several configuration utilities that can read the Kconfig files and produce a .config file. Some of them display the menus on screen and 
+allow you to make choices interactively. menuconfig is probably the one most people are familiar with, but there are also xconfig and gconfig.
+
+All configuration editors have a search function. You can access it in menuconfig by pressing the forward slash key, /. 
+In xconfig, it is in the edit menu, but make sure you miss off CONFIG_ part of the configuration item you are searching for.
+
+there are a set of known working configuration files in arch/$ARCH/configs, each containing suitable configuration values for a single SoC or a group of SoCs.
+
+when using a vendor-supplied kernel, the default configuration file is part of the board support package; 
+you will need to find out which one to use before you can build the kernel.
+
+There is another useful configuration target named oldconfig. This takes an existing .config file and asks you to supply configuration values 
+for any options that don't have them. You would use it when moving a configuration to a newer kernel version; 
+copy .config from the old kernel to the new source directory and run the make ARCH=arm oldconfig command to bring it up to date. 
+
+When you start the kernel build, a header file, include/generated/autoconf.h, is generated, which contains #define for each configuration value 
+so that it can be included in the kernel source.
+
+
+
+
+Compiling - Kbuild
+-------------------
+
+The kernel build system, Kbuild, is a set of make scripts that take the configuration information from the .config file, work out the dependencies, and 
+compile everything that is necessary to produce a kernel image containing all the statically linked components, possibly a device tree binary and 
+possibly one or more kernel modules. 
+
+
+

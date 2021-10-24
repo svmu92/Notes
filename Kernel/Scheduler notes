@@ -1,0 +1,366 @@
+Scheduler
+--------------
+
+Aim - low latency, high throughput
+
+I/O processes - run for short time - scheduled frequently
+Processor bound processes - run for longer intervals - less frequently scheduled
+
+Runnable process with higher priority and timeslice remaining always runs.
+
+nice value - from -20 to +19 (default 0). Higher nice value, lower priroity
+
+real-time priority - 0 to 99 - Higher value, higher priority
+
+timeslice - CFS assigns processes a proportion of the processor. The amount of processor time a process receivs is a function of the system load. This assigned proportion is further affected by each process's nice value.
+	higher nice value - lower priority - deflationary weight - less proportion
+	lower nice value - higher priority - inflationary weight - higher proportion
+- also  a function of how much of a proportion of the processor runnable process has consumed.
+
+
+Linux Scheduling Algorithm
+-----------------------
+- modular - scheduler classes.
+- different, pluggable algorithms can coexist.
+- Each scheduler class has a priority
+- kernel/sched.c - base scheduler code iterates over each class according to priority.
+- higher priority scheduler class with a runnable process runs
+- CFS - registered scheduler class for normal processes - SCHED_NORMAL - kernel/sched_fair.c
+
+/*
+ * Scheduling policies
+ */
+#define SCHED_NORMAL		0
+#define SCHED_FIFO		1
+#define SCHED_RR		2
+#define SCHED_BATCH		3
+/* SCHED_ISO: reserved but not implemented yet */
+#define SCHED_IDLE		5
+#define SCHED_DEADLINE		6
+
+
+CFS
+---
+
+Issues with nice value and proportions
+1) low priority (hih nice value) processes result in frequent context-switches compared to normal/high prirority processes.
+2) proportion received for processes with relatively close but different nice values change a lot for low priority processes but remain almost same for normal/high priority processes. (i.e., 19-->18 change is almost double but 1--->0 change is negligible).
+3) timeslice is bound by tick value and system timer.
+4) Certain sleep/wakeup processes can trick a priority-based scheduler into providing it an unfair amount of processor time at the expense of the rest of the system.
+
+
+Issue 2) can be solved by making proportion geometric instead of additive.
+Issue 3) can be solved by mapping nice value to timeslices using a mesurement decoupled from timer ticks.
+
+CFS doesn't use timeslices. It assigns each process a proportion of the processor. Constant fairness but a variable switching rate.
+
+CFS will run each process for some amount of time, round-robin, selecting next the process that has run the least.
+CFS calculates how long a process should run as a function of the total number of running processes.
+CFS uses the nice value to weight the proportion of processor a process is to receive. higher nice value processes receives a fractional weight relative to the default nice value process, lower nice value process recieves a larger weight.
+
+Each process then runs for a "timeslice" proportional to its weight divided by the total weight of all runnable threads.
+
+CFS sets a target for its approximation of the scheduling duration and perfect multitasking - "targeted latency"
+Smaller targeted latency yields better interactivity at the expense of higher switching costs and overall throughput.
+
+CFS assigns a floor value on the timeslice allocated to each process - "minimum granularity" (1 ms default). This ensures that even if the runnable processes number is very high, frequent switching(ns) does not happen.
+
+Absolute nice values donot affect the proportion of processor time received. Only relative values are used in calculating the proportion.
+
+
+
+
+Linux Implementation
+-------------------
+
+Four components of CFS:
+	- Time accounting
+	- Process selection
+	- The Scheduler Entry point
+	- Sleeping and Waking up
+
+
+Time Accounting
+------------
+- When timeslice reaches zero, after being decremented for each tick, the process is preempted in favor of another runnable process with a non-zero timeslice.
+
+
+"struct sched_entity" - <linux/sched.h>
+
+- It is embedded in the process descriptor struct task_struct as a member variable named se.
+
+- "vruntime" variable stores the virtual runtime.
+	virtual runtime (ns) = actual runtime weighted by number of runnable processes
+
+
+- update_curr() manages time accounting.
+
+- calc_delta_fair() calculates weighted execution time which is added to vruntime
+
+- update_curr() is invoked periodically by the system timer and also whenever a process becomes runnable or blocks.
+
+
+Process selection
+----------------
+- CFS picks the process with smallest vruntime.
+- CFS uses a red-black(rb) tree to manage a list of runnable processes and efficiently find the process with the smallest vruntime.
+	rb-tree is a self-balancing binary search tree
+
+- process with smalles vruntime will be the left-most node in the tree.
+
+- __pick_next_entity() does this.
+
+- rb_leftmost is the cached value of leftmost node.
+
+
+Adding and removing processes:
+
+- A process is added via the enqueue_entity() when a process becomes runnable or is first created.
+- updates the runtime and other statistics and then invokes __enqueue_entity() to insert the entry into red-black tree.
+- rb_insert_color_cached()
+
+
+
+- CFS removes processes from the rb-tree via dequeue_entity()
+- updates the runtime and other statistics and then calls __dequeue_entity() to remove the entry from red-black tree.
+- rb_erase() does it.
+
+
+The Scheduler Entry point
+------------------------
+
+- Main entry point is the schedule(). [kernel/sched/core.c]
+- schedule() find the highest priority scheduler class with a runnable process and asks it what to run next.
+- calls pick_next_task(). It goes through each scheduler class, starting with highest priority, and selects the highest priority process in the highest priority class.
+
+- optimization: more likely, all processes will belong to fair scheduler class, then call it directly. otherwise loop through all scheduler classes and select one. 
+
+
+
+*
+ * This is the main, per-CPU runqueue data structure.
+ *
+ * Locking rule: those places that want to lock multiple runqueues
+ * (such as the load balancing or the thread migration code), lock
+ * acquire operations must be ordered by ascending &runqueue.
+ */
+struct rq {
+	/* runqueue lock: */
+	raw_spinlock_t		lock;
+
+/*
+ * __schedule() is the main scheduler function.
+ *
+ * The main means of driving the scheduler and thus entering this function are:
+ *
+ *   1. Explicit blocking: mutex, semaphore, waitqueue, etc.
+ *
+ *   2. TIF_NEED_RESCHED flag is checked on interrupt and userspace return
+ *      paths. For example, see arch/x86/entry_64.S.
+ *
+ *      To drive preemption between tasks, the scheduler sets the flag in timer
+ *      interrupt handler scheduler_tick().
+ *
+ *   3. Wakeups don't really cause entry into schedule(). They add a
+ *      task to the run-queue and that's it.
+ *
+ *      Now, if the new task added to the run-queue preempts the current
+ *      task, then the wakeup sets TIF_NEED_RESCHED and schedule() gets
+ *      called on the nearest possible occasion:
+ *
+ *       - If the kernel is preemptible (CONFIG_PREEMPTION=y):
+ *
+ *         - in syscall or exception context, at the next outmost
+ *           preempt_enable(). (this might be as soon as the wake_up()'s
+ *           spin_unlock()!)
+ *
+ *         - in IRQ context, return from interrupt-handler to
+ *           preemptible context
+ *
+ *       - If the kernel is not preemptible (CONFIG_PREEMPTION is not set)
+ *         then at the next:
+ *
+ *          - cond_resched() call
+ *          - explicit schedule() call
+ *          - return from syscall or exception to user-space
+ *          - return from interrupt-handler to user-space
+ *
+ * WARNING: must be called with preemption disabled!
+ */
+ 
+
+
+- overall flow
+
+schedule() ---> __schedule() ---> pick_next_task() ---> class specific pick_next_task() ---> pick_next_entity() ---> __pick_next_entity()
+	
+
+Sleeping and waking up
+----------------------
+
+- A task sleeps when:
+	- waiting for some event - file I/O, hardware event or sleep time to be over.
+	- it tries to obtain a contended semaphore, involuntarily
+
+- The task marks itself as sleeping, puts itself in wait queue, removes itself from rb-tree of runnable processes, and calls schedule().
+
+- Waking up - task is set as runnable, removed from wait queue, and added back to the rb-tree.
+
+- Two possible states while sleeping - TASK_INTERRUPTIBLE and TASK_UNINTERRUPTIBLE
+
+
+Wait Queues
+-----------
+
+- list of processes waiting for an event to occur.
+- represented by "wake_queue_head_t".
+
+struct wait_queue_head {
+	spinlock_t		lock;
+	struct list_head	head;
+};
+typedef struct wait_queue_head wait_queue_head_t;
+
+- DECLARE_WAITQUEUE() or init_waitqueue_head()
+
+- add_wait_queue() - adds wait item to waitqueue
+
+- prepare_to_wait() - adds task back to the wait queue if necessary, which is needed on subsequent iterations of the loop. also sets the state to TASK_INTERRUPTIBLE or TASK_UNINTERRUPTIBLE
+
+- finish_wait() - removes itself from waitqueue
+
+
+Waking
+------
+
+- Waking is handled via wake_up() - wakes up all the tasks waiting on the given wait queue.
+
+- try_to_wake_up() - sets the task state to TASK_RUNNING and calls enqueue_task() and sets "need_resched" if required.
+
+/**
+ * try_to_wake_up - wake up a thread
+ * @p: the thread to be awakened
+ * @state: the mask of task states that can be woken
+ * @wake_flags: wake modifier flags (WF_*)
+ *
+ * If (@state & @p->state) @p->state = TASK_RUNNING.
+ *
+ * If the task was not queued/runnable, also place it back on a runqueue.
+ *
+ * Atomic against schedule() which would dequeue a task, also see
+ * set_current_state().
+ *
+ * This function executes a full memory barrier before accessing the task
+ * state; see set_current_state().
+ *
+ * Return: %true if @p->state changes (an actual wakeup was done),
+ *	   %false otherwise.
+ */
+ 
+ 
+
+
+Preemption and Context Switching
+--------------------------------
+
+- context_switch() [kernel/sched/core.c] 
+	/*
+	 * context_switch - switch to the new MM and the new thread's register state.
+	 */
+	 
+- called by __schedule() when a new process has been selected to run. It does two basic jobs:
+	- calls switch_mm() to switch the virtual memory mapping from previous process to that of new process.
+	- calls switch_to() to switch the processor state from the previous process's to the current's. This involves saving and restoring stack 		information and the processor registers and any other architecture-specific state that must be managed.
+
+
+- schedule() is called either explicitly or when "need_resched" flag is set. It is set by scheduler_tick() when a process should be preempted, and by try_to_wake_up() when a process that has higher priority is awakened.
+
+- functions for accessing and manipulating "need_resched" flag:
+	- set_tsk_need_resched()
+	- clear_tsk_need_resched()
+	- need_resched() - test the value of the flag
+
+- Upon returning to user-space or from an interrupt, the flag is checked.
+- The flag is per-process and not global.
+
+
+- User preemption occurs when the kernel is about to return to user-space, after interrupt or system call, and "need_resched" is set.
+
+- Kernel preemption:
+	- kernel can preempt a task running in the kernel so long as it does not hold a lock.
+	- "preempt_count" in each process's thread_info. Starts at zero and increments once for each lock held and decrements when released.
+	- On returning from interrupt, both "preempt_count" and and "need_resched" are checked.
+	- can also occur explicitly when a task in the kernel blocks or schedule() is called.
+
+
+
+Real-time scheduling
+----------------------
+
+- SCHED_FIFO and SCHED_RR are real-time scheduling policies provided by linux
+
+- A runnable SCHED_FIFO task is always scheduled over a SCHED_NORMAL task. It has no timeslice and can run indefinitely.
+
+- Only a higher priority SCHED_FIFO or SCHED_RR task can preempt a SCHED_FIFO task.
+
+- SCHED_RR is identical to SCHED_FIFO but each process can run only until it exhausts a predetermined timeslice and a same priority task is runnable.
+
+- A higher priority process always preempts lower priority one. Ones with same priority runs in round-robin fashion. A lower priority one cannot preempt a higher priority one even if timeslice is exhausted.
+
+- Processes in real-time policies have static priorities.
+
+- Real-time scheduling policies in linux provide soft real-time behavior.
+
+- RT priorities range from 0 to MAX_RT_PRIO-1. (0 to 99) 
+
+- SCHED_NORMAL tasks use MAX_RT_PRIO to MAX_RT_PRIO + 40 (-20 to 19 nice values)
+
+#define MAX_NICE	19
+#define MIN_NICE	-20
+#define NICE_WIDTH	(MAX_NICE - MIN_NICE + 1)
+
+
+#define MAX_PRIO		(MAX_RT_PRIO + NICE_WIDTH)
+#define DEFAULT_PRIO		(MAX_RT_PRIO + NICE_WIDTH / 2)
+
+/*
+ * Convert user-nice values [ -20 ... 0 ... 19 ]
+ * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+ * and back.
+ */
+#define NICE_TO_PRIO(nice)	((nice) + DEFAULT_PRIO)
+#define PRIO_TO_NICE(prio)	((prio) - DEFAULT_PRIO)
+
+
+System calls related to scheduler
+--------------------------------
+
+System Call 			Description
+nice() 			Sets a process’s nice value
+sched_setscheduler() 		Sets a process’s scheduling policy
+sched_getscheduler() 		Gets a process’s scheduling policy
+sched_setparam() 		Sets a process’s real-time priority
+sched_getparam() 		Gets a process’s real-time priority
+sched_get_priority_max() 	Gets the maximum real-time priority
+sched_get_priority_min() 	Gets the minimum real-time priority
+sched_rr_get_interval() 	Gets a process’s timeslice value
+sched_setaffinity() 		Sets a process’s processor affinity
+sched_getaffinity() 		Gets a process’s processor affinity
+sched_yield() 			Temporarily yields the processor
+
+
+
+- nice() increments the given process's static priority by the given value. Only root user can provide negative value.
+
+nice() || ----> set_user_nice() ---> set_one_prio()
+
+- Linux scheduler enforces hard processor affinity. This is stored as a bitmask in the task_struct as cpus_allowed. One bit per possible processors. By default, all are set. Can be modified using sched_setaffinity().
+
+- When a process is first created, it inherits its parents affinity mask.
+- When a process's affinity is changed, the kernel uses the migration threads to push the task onto a legal processor.
+- The load balancer pulls tasks to only an allowed processor.
+
+- sched_yield() removes the process from the active array and puts in an expired array. This preeempts the process and puts it at the end of the priority list.
+
+
+

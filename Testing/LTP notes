@@ -1,0 +1,379 @@
+
+LTP Goal - To validate the reliability, robustness and stability of Linux kernel.
+
+LTP focuses on
+		functionality,
+		regression, and
+		stress testing for the Linux kernel and related features.
+		
+- Each test 
+	is an executable
+	is as self-contained as possible
+	covers a well-defined assertion/group of assertions
+	runs automatically
+
+- Overall test status is passed as an exit value.
+- Additional info is printed to stdout
+
+- Uses environment variables and can accept global parameters
+
+LTP covers:
+- 1200 Syscall tests
+- 1600 POSIX Conformance tests
+- Regression tests for Linux CVEs (dirtyc0w, stack_clash, meltdown...)
+- Various I/O tests
+- Network related tests (2 m/cs required)
+- Realtime testsuite
+- Linux Container, controller and namespace tests
+etc.
+
+
+- Uses C and shell script
+	4000+ C files
+	600+ shell scripts
+	
+Steps to download and build
+-------------------------
+
+$ git clone https://github.com/linux-test-project/ltp.git
+$ cd ltp
+
+$ make autotools
+$ ./configure
+$ make
+$ sudo make install
+
+	
+- By default LTP will be installed in /opt/ltp
+
+
+Running LTP
+---------
+
+- Can run the .out files individually
+
+- To run all the testcases - 
+	$ sudo ./runltp
+
+- To run a specific category of test -
+	$ sudo ./runltp -f <testcase>
+	
+- To run a specific test
+	$ sudo ./runltp -f <category> -s <testcase>
+	
+- Results are stored in /opt/ltp/output/LTP_RUN_ON-<date>.failed and /opt/ltp/results/LTP_RUN_ON-<date>-<timestamp>.log
+
+- The list of tests to be executed is stored in runtest files under the 'runtest/' directory
+
+- The default set of runtest files to be executed is stored in 'scenario_groups/default'
+
+LTP-PAN driver
+------------
+
+- ltp-pan driver is used by runltp. runltp is a wrapper around ltp-pan test driver. It runs the default test scenario.
+
+- accepts a file that lists the tests to be executed
+
+- exits with 0 if all tests pass, or with a number indicating how many tests failed.
+
+- SCENARIO_LISTS >> scenfile >> alltests
+
+- ${LTPROOT}/bin/ltp-pan
+
+Usage: pan -n name [ -SyAehpqQ ] [ -s starts ] [-t time[s|m|h|d] [ -x nactive ] [ -l logfile ]
+	[ -a active-file ] [ -f command-file ] [ -C fail-command-file ] [ -d debug-level ]
+	[-o output-file] [-O output-buffer-directory] [cmd]
+
+	-e - exit with number of tests that failed.
+	-f - the name of the command line file to execute tests from 
+
+
+Testcases
+----------
+- tests have been organized under the testcases directory
+
+	Categories
+	----------
+	commands - test for user level commands like ar, ld, ldd, nm, objdump, size etc
+	cve
+	kdump
+	kernel - fs, ipc, io, mm, syscalls, sched
+	lib 
+	misc - miscellaneous tests that donot fit into one of the categories
+	netwrok - network tests for ipv6, multicast, nfs and n/w related commands
+	open_posix_testsuite
+	realtime
+	
+
+Releases
+--------
+ - Releases in LTP happens every quarter.
+ 
+
+Output
+-------
+- LTP will output a PASS/FAIL for each test run
+
+- also detailed output from each test is printed to stdout/stderr
+
+- default output is human readable.
+	testname
+	result
+	exit value
+	start time 
+	summary
+
+- output file has date and timestamp in its name.
+- This can be changed with -l option
+	$ sudo ./runltp -f syscalls -s madvise -l mylogfile
+- However, this output file is not human readable, it is script-readable
+- To get human readable output file, pass -p
+	$ sudo ./runltp -f syscalls -s madvise -l mylogfile -p
+	
+- The script-readable output can be used to automate interpretation of test results.
+
+- We can generate HTML report of LTP test run using -g option
+	$ sudo ./runltp -f syscalls -s madvise -g mylog.html
+
+
+Controlling tests to run
+---------------------
+- -f flag - select a list of tests to run
+	$ sudo ./runltp -f sched
+	- can accept comma separated list of files (runtests/ files)
+
+- -s flag - accepts a regex as an argument and run tests which match it.
+	$ sudo ./runltp -s ^mkdir
+	
+- -I flag - how many times you want to run a test
+
+Important Files
+---------------
+
+ver_linux script - used to obtain hardware, software and environmental information.
+
+IDcheck.sh - check whether the system lacks the users and user groups required to execute the LTP testsuite.
+
+runtest directory - testsuites are defined in this directory. Each file contains a list of test cases in a simple format
+
+testcases/bin - contains all the testcases executables
+
+testscripts - contains the scripts that can be used for usage of runltp
+
+
+Template of LTP
+-------------
+- Each test is a binary written in portable shell or C.
+
+- All tests consists of three functions:
+	setup() - called once at the start of the test. Overall test initialization is performed
+	test()
+	cleanup()
+
+- There are also:
+	bit flags
+	arrays
+	strings
+ which are required by the test.
+ 
+
+Adding a new testcase 
+-----------------------
+
+- write the C program 
+- need to include "tst_test.h" which contains the most common API functions and the test harness initialization code
+- define "struct tst_test"
+- there is no main() in your test program, it is in "tst_test.h"
+
+- place it in ltp/testcases/misc/<new-folder>/
+
+- write a makefile
+- sample makefile is provided by LTP
+- it uses the main makefile
+
+- make the LTP from LTPROOT folder
+
+- make install to install in /opt/ltp
+
+- testcase binary will be present in /opt/ltp/testcases/bin/
+
+- cannot directly give the filename to runltp to run. Need to add in a runtest file first.
+
+- can add setup() and cleanup() as required.
+
+
+static struct tst_test mytest = {
+	.test_all = mytestfunction,
+	.setup = mysetup,
+	.cleanup = mycleanup
+	};
+	
+
+tst_res API
+--------------
+ 
+ 	void tst_res(int ttype, char *arg_fmt, ...);
+ 	
+- printf-like function to report test result, it's mostly used with ttype:
+	TPASS 
+	TFAIL
+	TINFO
+	TWARN
+
+
+runtest file format
+---------------
+- two coloumn format
+
+- 1st col - test name, used by test runners for reporting and filtering. single string with no spaces
+- 2nd col - passed to shell in order to execute the test. can contain spaces. often the executable name with arguments
+
+	eg: 	mytest mytest
+		chmod01 chmod01
+		chmod01A symlink01 -T chmod01
+	
+
+TCONF
+-------
+- Test configuration not satisfied, such as machine type or kernel version, LTP will return TCONF
+
+- Bit flags can be set in the tst_test structure.
+	eg: 	'.needs_root = 1'
+		'.min_kver = "<version>"'
+
+
+Test temporary directory
+-------------------
+
+- Bit flag - '.needs_tmpdir = 1' - temporary directory will be set as the test working directory
+
+- LTP has two library functions:
+	tst_tmpdir() - creates a unique test temporary directory under $TMPDIR and changes the current working directory to it.
+	tst_rmdir() - called from test cleanup to delete the temporary directory recursively.
+
+- Close all the file descriptors pointing to files in temporary directory either in test() or cleanup().
+
+- Use -d option to chage the temporary directory. Default is in /tmp/
+
+- usually used when you are creating temporary files from your test.
+
+
+TBROK
+------
+- something unexpected happened in the test setup and test was aborted
+- use with tst_brk. Cannot be used with tst_res.
+
+	void tst_brk(int ttype, char* arg_fmt, ...);
+
+- report error and exit the test
+- ttype can be combined with TERRNO or TTERRNO to print errno, TST_ERR respectively.
+
+
+SAFE Macros
+--------------
+- to simplify error checking in test preparation.
+- Instead of checking return value of system APIs, use SAFE macros.
+	eg: fd=SAFE_OPEN("lwl.txt",O_CREAT,0777);
+	
+- If call fails, safe macro produces information with:
+	source filename and line
+	paramters passed to the call in a human readable form
+	errno, if applicable
+	
+Other safe macros:
+- included in include/safe_macros.h header located under LTP source tree.
+- some safe file operations are defined in safe_file_ops.h
+	SAFE_FILE_SCANF() 
+	SAFE_FILE_PRINTF()
+	- useful for reading/writing value from various filesystems such as procfs and sysfs.
+
+ 
+Test Functions
+----------------
+Two test function pointers
+- test - used along with a number of tests .tcnt that allows for more detailed result reporting
+	If set, test function is called tcnt times with an integer parameter of range [0, tcnt-1]
+- test_all - used when test is implemented as a single function
+
+- Only one of .test or .test_all can be set at a time.
+
+
+TEST macro
+--------
+- widely used in LTP testcases
+
+#define TEST(SCALL) 		\
+	do{			\
+		errno = 0;	\
+		TST_RET=SCALL;	\
+		TST_ERR=errno;	\
+	} while(0)
+
+
+Executing test for specific duration
+-------------------------------------
+- LTP provides -t option that allows you to execute a test for a particular duration
+	eg:	-t 60s
+		-t 45m
+		-t 24h
+		-t 2d
+
+- The test will run multiple times for that duration	
+	
+Reduce logging
+------------
+
+- -Q - don't log start of test in kernel log (dmesg)
+
+- -q - print less verbose output ot screen. Willnot display output of ver_linux script. Also doesn't add to kernel log.
+
+
+Logging to file
+-----------
+
+- -o - allows you to redirect test output to a file
+
+- -e - print current release version
+
+
+Stress testing in LTP
+-------------------
+- Binary "genload" is used for creating stress. 
+	ltp/tools/genload/genload.c
+
+- -c <options> - run test under additional background CPU load
+	no. of processes creating the CPU load by spinning over sqrt()
+	
+- -D <options> - run test under additional background load on secondary storage
+		no. of processes creating storage load by spinning over write()
+
+- -m <options> - run test under additional background load on main memory
+		no. of processes creating main memory load by spinning over malloc()
+
+- -i <options> - run test under additional background load on IO bus
+
+
+LTP on Yocto
+------------
+LTP recipe is available on poky: meta/recipes-extended/ltp
+
+IMAGE_INSTALL += "ltp"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

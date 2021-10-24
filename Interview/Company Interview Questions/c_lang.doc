@@ -1,0 +1,41 @@
+﻿
+
+
+
+
+1) Basic data types in C
+2) Derived data types in C
+3) What is qualifier?
+4) const and volatile qualifier
+5) Name the bitwise operators
+6) Add two numbers using bitwise operators
+7) Multiply and divide using shift operators
+8) Fibonacci number program
+9) Program to find x^y using inbuilt function pow() and without using inbuilt function
+10) What is a function? Types of functions
+11) Which are the storage classes?
+12) Explain register storage class
+13) difference between const int *p and const int *const p
+14) What is int(*p)[5]
+15) An array is defined in p1.c and can u use extern int arr[] in another program p2.c
+16) How to modify value in 'a' in const int a=5 without using pointers
+17) Swap two variables without using third variable (two ways)
+18) How to access/call functions using pointers
+19) What is a structure?
+20) Difference between structure and union
+21) How to declare structures using your name (Hint: typedef)
+22) Which are constants if you define a structure like const struct s{int a; int *p;}*q;
+23) What is structure padding?
+24) What is the size of a given structure?
+25) What is the size of a given union?
+26) What is preprocessor directives?
+27) Explain different preprocessor directives which you know?
+28) Write a macro to find the number of seconds in a year(Hint: 365*24*60*60 is out of range in Turbo C)
+29) What is #pragma?
+30) What is a macro?
+31) Write a macro to find the biggest of two numbers
+32) What is run time linking?
+33) Write a program to find the middle node in a single linked list using only one for loop
+34) Write a program to implement double linked list using only one pointer(Hint: use exor operator)
+35) Difference between C and Embedded C
+36) What is inline functions?

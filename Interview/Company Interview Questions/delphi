@@ -1,0 +1,51 @@
+Delphi   B64E1  Raghavendra
+
+
+Digital:
+  flipflops(SR,D,JK,T),basic gates,universal gates,special gates.
+   ***(basic gates using universal gates).
+    (NAND using XOR,XNOR & NOR using XOR,XNOR)
+     
+
+Micro processors:
+   instruction set,interrupts
+
+
+Micro controller:
+   Diff b/w micro processors and micro controller,
+   which one is better and why?
+
+
+elecronics:
+   zener diode/pn diode,avalanche breakdown,zener breakdown, forbidden gap,
+  transistor types(PNP,NPN),diff b/w BJT and FET,
+   BJT types and FET types,
+
+
+LICA:
+  op-amp, differentiater,integrater,adder,subtractor,inverting & non inverting amplifiers,
+
+
+c:
+  structures,unions,
+  proprocessing stage(
+                          preprocessor------>translator------------->assembler--------->linker----------->locator)
+                     what is this locator just chek it out?
+ --->program:
+           if(____________________)
+            {
+               printf("Raghavendhar ");
+               }
+            else
+             {
+                printf(" E");
+              }
+            Q:write the condition for which both the statements will execute?
+             ans:if(!(printf("Raghavendhar"))------>(...c)
+            @------->by using fork also possible.--------->(linux)
+
+
+projects:  mini project & major project
+        --->block diagram,
+        --->program code and explanation.
+

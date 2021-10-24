@@ -1,0 +1,65 @@
+
+modprobe is a Linux program originally written by Rusty Russell and used to add a loadable kernel module to the Linux kernel or to remove a loadable kernel module from the kernel. It is commonly used indirectly: udev relies upon modprobe to load drivers for automatically detected hardware.[citation needed]
+
+As of 2014 modprobe is distributed as part of the software package "kmod"[1] (maintained by Lucas De Marchi and others). It was previously developed as:
+
+    "module-init-tools",[2] for Linux kernel version 2.6 and later (maintained by Jon Masters and others)
+    "modutils"[3] for use with Linux versions 2.2.x and 2.4.x. .
+
+
+
+
+
+
+
+Operation
+
+The modprobe program offers more full-featured "Swiss-army-knife" features than the more basic insmod and rmmod utilities, with the following benefits:
+
+    an ability to make more intuitive decisions about which modules to load
+    an awareness of module dependencies, so that when requested to load a module, modprobe adds other required modules first
+    the resolution of recursive module dependencies as required
+
+If invoked with no switches, the program by default adds/inserts/installs the named module into the kernel. Root privileges are typically required for these changes.
+
+Any arguments appearing after the module name are passed to the kernel (in addition to any options listed in the configuration file).
+
+In some versions of modprobe, the configuration file is called modprobe.conf, and in others the equivalent is the collection of files called <modulename> in the /etc/modprobe.d directory.
+
+
+
+Features
+
+The modprobe program also has more configuration features than other similar utilities. It is possible to define module aliases allowing for some automatic loading of modules. When the kernel requires a module, it actually runs modprobe to request it; however, the kernel has a description of only some module properties (for example, a device major number, or the number of a network protocol), and modprobe does the job of translating that to an actual module name via aliases.
+
+This program also has the ability to run programs before or after loading or unloading a given module; for example, setting the mixer right after loading a sound card module, or uploading the firmware to a device immediately prior to enabling it. Although these actions must be implemented by external programs, modprobe takes care of synchronizing their execution with module loading/unloading.
+
+
+Blacklist
+
+There are cases where two or more modules both support the same devices, or a module invalidly claims to support a device: the blacklist keyword indicates that all of a particular module's internal aliases are to be ignored.[4]
+
+There are a couple of ways to blacklist a module, and depending on the method used to load it depends on where this is configured.
+
+There are two ways to blacklist a module using modprobe, employing the modprobe.conf system, the first is to use its blacklisting system in /etc/modprobe.d/blacklist:
+
+cat /etc/modprobe.d/blacklist
+blacklist ieee1394
+blacklist ohci1394
+blacklist eth1394
+blacklist sbp2
+
+An install primitive is the highest priority in the config file and will be used instead of the blacklisting method above, requiring this second method:
+
+cat /etc/modprobe.d/ieee1394
+install ieee1394 /bin/true
+install ohci1394 /bin/true
+install eth1394 /bin/true
+install sbp2 /bin/true
+
+Alternately, you can modify /etc/modprobe.conf:
+
+alias sub_module /dev/null 
+alias module_main /dev/null 
+options module_main needed_option=0
+

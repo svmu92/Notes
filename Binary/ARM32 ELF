@@ -1,0 +1,42 @@
+ARM32 ELF
+----------
+
+ELF Header
+-----------
+e_type - 
+
+e_machine - EM_ARM (40, 0x28)
+
+e_entry - if bit[0] == 1, then entry point contains thumb code
+	     bit[1:0] == 00, then entry point contains arm code
+	     
+e_flags - processor-specific flags
+
+
+ELF Identification
+-------------
+e_ident (16-byte) - provides information on how to interpret the file itself.
+
+EI_CLASS - ELFCLASS 32 objects
+
+EI_DATA - ELFDATA2MSB or ELFDATA2LSB
+
+EI_OSABI - 
+
+
+Sections
+-----------
+
+Section Types
+-----------
+
+SHT_ARM_EXIDX - 0x70000001 - Exception Index Table
+etc.
+
+
+Special sections
+---------------
+.ARM.exidx - SHT_ARM_EXIDX
+.ARM.extab - SHT_PROGBITS 
+
+
