@@ -1,0 +1,1068 @@
+Process address space
+--------------------
+Process address space, is the repre-
+sentation of memory given to each user-space process on the system.
+- Linux is a virtual
+memory operating system, and thus the resource of memory is virtualized among the
+processes on the system.
+
+- The process address space consists of the virtual memory addressable by a process and the
+addresses within the virtual memory that the process is allowed to use.
+
+- Each process is given a flat 32- or 64-bit address space, with the size depending on the architecture.
+
+- A memory address in one process’s address space is completely unrelated
+to that same memory address in another process’s address space.
+- Both processes can have
+different data at the same address in their respective address spaces.
+
+- Alternatively, processes can elect to share their address space with other processes.We know these processes as
+threads.
+
+- Although a process can address up to 4GB of memory (with a 32-bit address space), it doesn’t have
+permission to access all of it.
+
+- The interesting part of the address space is the intervals of
+memory addresses, such as 08048000-0804c000 , that the process has permission to access.
+
+- These intervals of legal addresses are called memory areas.The process, through the kernel,
+can dynamically add and remove memory areas to its address space.
+
+- The process can access a memory address only in a valid memory area. Memory areas
+have associated permissions, such as readable, writable, and executable, that the associated
+process must respect.
+
+- If a process accesses a memory address not in a valid memory area,
+or if it accesses a valid area in an invalid manner, the kernel kills the process with the
+dreaded “Segmentation Fault” message.
+
+
+Memory areas can contain all sorts of goodies, such as
+- A memory map of the executable file’s code, called the text section.
+- A memory map of the executable file’s initialized global variables, called the data
+section.
+- A memory map of the zero page (a page consisting of all zeros, used for purposes
+such as this) containing uninitialized global variables, called the bss section.
+- A memory map of the zero page used for the process’s user-space stack.
+- An additional text, data, and bss section for each shared library, such as the C library
+and dynamic linker, loaded into the process’s address space.
+- Any memory mapped files.
+- Any shared memory segments.
+- Any anonymous memory mappings, such as those associated with malloc().
+
+
+- All valid addresses in the process address space exist in exactly one area; memory areas do not
+overlap. There is a separate memory area for each different chunk of memory
+in a running process: the stack, object code, global variables, mapped file, and so on.
+
+
+The Memory Descriptor
+--------------------
+- The kernel represents a process’s address space with a data structure called the memory
+descriptor.
+- This structure contains all the information related to the process address space.
+- The memory descriptor is represented by struct mm_struct and defined in <linux/mm_types.h >.
+"""
+struct mm_struct {
+	struct {
+		struct vm_area_struct *mmap;		        /* list of VMAs */
+		struct rb_root mm_rb;                   /* red-black tree of VMAs */
+		u64 vmacache_seqnum;                   /* per-thread vmacache */
+#ifdef CONFIG_MMU
+		unsigned long (*get_unmapped_area) (struct file *filp,
+				unsigned long addr, unsigned long len,
+				unsigned long pgoff, unsigned long flags);
+#endif
+		unsigned long mmap_base;	              /* base of mmap area */
+		unsigned long mmap_legacy_base;	        /* base of mmap area in bottom-up allocations */
+#ifdef CONFIG_HAVE_ARCH_COMPAT_MMAP_BASES
+		/* Base adresses for compatible mmap() */
+		unsigned long mmap_compat_base;
+		unsigned long mmap_compat_legacy_base;
+#endif
+		unsigned long task_size;	             /* size of task vm space */
+		unsigned long highest_vm_end;	        /* highest vma end address */
+		pgd_t * pgd;
+
+#ifdef CONFIG_MEMBARRIER
+		/**
+		 * @membarrier_state: Flags controlling membarrier behavior.
+		 *
+		 * This field is close to @pgd to hopefully fit in the same
+		 * cache-line, which needs to be touched by switch_mm().
+		 */
+		atomic_t membarrier_state;
+#endif
+
+		/**
+		 * @mm_users: The number of users including userspace.
+		 *
+		 * Use mmget()/mmget_not_zero()/mmput() to modify. When this
+		 * drops to 0 (i.e. when the task exits and there are no other
+		 * temporary reference holders), we also release a reference on
+		 * @mm_count (which may then free the &struct mm_struct if
+		 * @mm_count also drops to 0).
+		 */
+		atomic_t mm_users;
+
+		/**
+		 * @mm_count: The number of references to &struct mm_struct
+		 * (@mm_users count as 1).
+		 *
+		 * Use mmgrab()/mmdrop() to modify. When this drops to 0, the
+		 * &struct mm_struct is freed.
+		 */
+		atomic_t mm_count;
+
+#ifdef CONFIG_MMU
+		atomic_long_t pgtables_bytes;	    /* PTE page table pages */
+#endif
+		int map_count;			               /* number of VMAs */
+
+		spinlock_t page_table_lock;       /* Protects page tables and some
+					                             * counters
+					                             */
+		struct rw_semaphore mmap_sem;
+
+		struct list_head mmlist;          /* List of maybe swapped mm's.	These
+					                             * are globally strung together off
+					                             * init_mm.mmlist, and are protected
+					                             * by mmlist_lock
+					                             */
+
+
+		unsigned long hiwater_rss; /* High-watermark of RSS usage */
+		unsigned long hiwater_vm;  /* High-water virtual memory usage */
+
+		unsigned long total_vm;	   /* Total pages mapped */
+		unsigned long locked_vm;   /* Pages that have PG_mlocked set */
+		atomic64_t    pinned_vm;   /* Refcount permanently increased */
+		unsigned long data_vm;	   /* VM_WRITE & ~VM_SHARED & ~VM_STACK */
+		unsigned long exec_vm;	   /* VM_EXEC & ~VM_WRITE & ~VM_STACK */
+		unsigned long stack_vm;	   /* VM_STACK */
+		unsigned long def_flags;
+
+		spinlock_t arg_lock;       /* protect the below fields */
+		unsigned long start_code, end_code, start_data, end_data;
+		unsigned long start_brk, brk, start_stack;
+		unsigned long arg_start, arg_end, env_start, env_end;
+
+		unsigned long saved_auxv[AT_VECTOR_SIZE]; /* for /proc/PID/auxv */
+
+		/*
+		 * Special counters, in some configurations protected by the
+		 * page_table_lock, in other configurations by being atomic.
+		 */
+		struct mm_rss_stat rss_stat;
+
+		struct linux_binfmt *binfmt;
+
+		/* Architecture-specific MM context */
+		mm_context_t context;
+
+		unsigned long flags;            /* Must use atomic bitops to access */
+
+		struct core_state *core_state; /* coredumping support */
+
+#ifdef CONFIG_AIO
+		spinlock_t			ioctx_lock;
+		struct kioctx_table __rcu	*ioctx_table;
+#endif
+#ifdef CONFIG_MEMCG
+		/*
+		 * "owner" points to a task that is regarded as the canonical
+		 * user/owner of this mm. All of the following must be true in
+		 * order for it to be changed:
+		 *
+		 * current == mm->owner
+		 * current->mm != mm
+		 * new_owner->mm == mm
+		 * new_owner->alloc_lock is held
+		 */
+		struct task_struct __rcu *owner;
+#endif
+		struct user_namespace *user_ns;
+
+		/* store ref to file /proc/<pid>/exe symlink points to */
+		struct file __rcu *exe_file;
+#ifdef CONFIG_MMU_NOTIFIER
+		struct mmu_notifier_mm *mmu_notifier_mm;
+#endif
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE) && !USE_SPLIT_PMD_PTLOCKS
+		pgtable_t pmd_huge_pte; /* protected by page_table_lock */
+#endif
+#ifdef CONFIG_NUMA_BALANCING
+		/*
+		 * numa_next_scan is the next time that the PTEs will be marked
+		 * pte_numa. NUMA hinting faults will gather statistics and
+		 * migrate pages to new nodes if necessary.
+		 */
+		unsigned long numa_next_scan;
+
+		/* Restart point for scanning and setting pte_numa */
+		unsigned long numa_scan_offset;
+
+		/* numa_scan_seq prevents two threads setting pte_numa */
+		int numa_scan_seq;
+#endif
+		/*
+		 * An operation with batched TLB flushing is going on. Anything
+		 * that can move process memory needs to flush the TLB when
+		 * moving a PROT_NONE or PROT_NUMA mapped page.
+		 */
+		atomic_t tlb_flush_pending;
+#ifdef CONFIG_ARCH_WANT_BATCHED_UNMAP_TLB_FLUSH
+		/* See flush_tlb_batched_pending() */
+		bool tlb_flush_batched;
+#endif
+		struct uprobes_state uprobes_state;
+#ifdef CONFIG_HUGETLB_PAGE
+		atomic_long_t hugetlb_usage;
+#endif
+		struct work_struct async_put_work;
+	} __randomize_layout;
+
+	/*
+	 * The mm_cpumask needs to be at the end of mm_struct, because it
+	 * is dynamically sized based on nr_cpu_ids.
+	 */
+	unsigned long cpu_bitmap[];
+};
+"""
+
+
+- The "mm_users" field is the number of processes(threads) using this address space.
+- The "mm_count" field is the primary reference count for the "mm_struct" .
+- All "mm_users" equate to one increment of "mm_count". Only
+when "mm_users" reaches zero (when all threads using an address space exit) is "mm_count"
+decremented.
+- When "mm_count" finally reaches zero, there are no remaining references to
+this mm_struct , and it is freed.
+
+- Having two counters enables the kernel to differentiate between the main usage counter ( mm_count ) and
+the number of processes using the address space ( mm_users ).
+
+
+- The "mmap" and "mm_rb" fields are different data structures that contain the same thing: all
+the memory areas in this address space.
+"""
+struct vm_area_struct *mmap;		        /* list of VMAs */
+struct rb_root mm_rb;                   /* red-black tree of VMAs */
+"""
+
+- The former stores them in a linked list, whereas
+the latter stores them in a red-black tree.
+- The "mmap" data
+structure, as a linked list, allows for simple and efficient traversing of all elements.
+- The "mm_rb" data structure, as a red-black tree, is more suitable to searching for a
+given element.
+
+- The kernel isn’t duplicating the mm_struct structures; just the containing objects. Overlaying a linked
+list onto a tree, and using both to access the same set of data, is sometimes called a
+"threaded tree".
+
+
+- All of the "mm_struct" structures are strung together in a doubly linked list via the
+"mmlist" field.
+- The initial element in the list is the "init_mm" memory descriptor, which
+describes the address space of the init process.
+"""
+struct mm_struct init_mm = {
+	.mm_rb		= RB_ROOT,
+	.pgd		= swapper_pg_dir,
+	.mm_users	= ATOMIC_INIT(2),
+	.mm_count	= ATOMIC_INIT(1),
+	.mmap_sem	= __RWSEM_INITIALIZER(init_mm.mmap_sem),
+	.page_table_lock =  __SPIN_LOCK_UNLOCKED(init_mm.page_table_lock),
+	.arg_lock	=  __SPIN_LOCK_UNLOCKED(init_mm.arg_lock),
+	.mmlist		= LIST_HEAD_INIT(init_mm.mmlist),
+	.user_ns	= &init_user_ns,
+	.cpu_bitmap	= CPU_BITS_NONE,
+	INIT_MM_CONTEXT(init_mm)
+};
+"""
+- The list is protected from concurrent access
+via the "mmlist_lock" , which is defined in kernel/fork.c .
+"""
+__cacheline_aligned_in_smp DEFINE_SPINLOCK(mmlist_lock);
+"""
+
+
+Allocating a memory descriptor
+------------------------------
+- The memory descriptor associated with a given task is stored in the mm field of the task’s
+process descriptor.
+- Thus, "current->mm" is the current process’s memory descriptor.
+
+- The "copy_mm()" function copies a parent’s memory descriptor to its child during "fork()".
+- The "mm_struct" structure is allocated from the "mm_cachep" slab cache via the
+"allocate_mm()" macro in kernel/fork.c .
+"""
+#define allocate_mm()	(kmem_cache_alloc(mm_cachep, GFP_KERNEL))
+"""
+
+- Normally, each process receives a unique
+mm_struct and thus a unique process address space.
+- Processes may elect to share their address spaces with their children by means of the
+CLONE_VM flag to clone(). The process is then called a thread.
+- In the case that CLONE_VM is specified, allocate_mm() is not called, and the process’s mm
+field is set to point to the memory descriptor of its parent via this logic in copy_mm():
+"""
+oldmm = current->mm;
+...
+if (clone_flags & CLONE_VM) {
+  mmget(oldmm);
+  mm = oldmm;
+  goto good_mm;
+}
+"""
+
+
+Destroying a memory descriptor
+------------------------------
+- When the process associated with a specific address space exits, the "exit_mm()" , defined in
+kernel/exit.c, function is invoked.
+- This function performs some housekeeping and updates some statistics.
+- It then calls "mmput()" , which decrements the memory descriptor’s "mm_users" user counter.
+- If the user count reaches zero, "mmdrop()" is called to decrement
+the "mm_count" usage counter.
+- If that counter is finally zero, the "free_mm()" macro is
+invoked to return the "mm_struct" to the "mm_cachep" slab cache via "kmem_cache_free()",
+because the memory descriptor does not have any users.
+"""
+#define free_mm(mm)	(kmem_cache_free(mm_cachep, (mm)))
+"""
+
+
+The "mm_struct" and kernel threads (Revisit)
+----------------------------------
+- Kernel threads do not have a process address space and therefore do not have an associ-
+ated memory descriptor.Thus, the "mm" field of a kernel thread’s process descriptor is NULL .
+- This is the definition of a kernel thread—processes that have no user context.
+- Kernel threads do not ever access any userspace memory. Because kernel threads do not have any pages
+in user-space, they do not deserve their own memory descriptor and page tables.
+- Despite this, kernel threads need some of the
+data, such as the page tables, even to access kernel memory.
+- To provide kernel threads the
+needed data, without wasting memory on a memory descriptor and page tables, or wast-
+ing processor cycles to switch to a new address space whenever a kernel thread begins
+running, kernel threads use the memory descriptor of whatever task ran previously.
+
+- Whenever a process is scheduled, the process address space referenced by the process’s
+"mm" field is loaded.
+- The "active_mm" field in the process descriptor is then updated to refer
+to the new address space.
+- Kernel threads do not have an address space and "mm" is NULL.
+- Therefore, when a kernel thread is scheduled, the kernel notices that "mm" is NULL and keeps
+the previous process’s address space loaded.
+- The kernel then updates the "active_mm" field
+of the kernel thread’s process descriptor to refer to the previous process’s memory
+descriptor.
+- The kernel thread can then use the previous process’s page tables as needed.
+- Because kernel threads do not access user-space memory, they make use of only the
+information in the address space pertaining to kernel memory, which is the same for all
+processes.
+
+
+
+
+Virtual Memory Areas (VMAs)
+===========================
+- The memory area structure, "vm_area_struct", represents memory areas.
+- It is defined in <linux/mm_types.h> .
+- In the Linux kernel, memory areas are often called virtual memory areas (abbreviated VMAs).
+
+- The "vm_area_struct" structure describes a single memory area over a contiguous
+interval in a given address space.
+- The kernel treats each memory area as a unique memory
+object. Each memory area possesses certain properties, such as permissions and a set of
+associated operations.
+- In this manner, each VMA structure can represent different types of
+memory areas—for example, memory-mapped files or the process’s user-space stack.
+
+"""
+/*
+ * This struct defines a memory VMM memory area. There is one of these
+ * per VM-area/task.  A VM area is any part of the process virtual memory
+ * space that has a special rule for the page-fault handlers (ie a shared
+ * library, the executable area etc).
+ */
+
+struct vm_area_struct {
+	/* The first cache line has the info for VMA tree walking. */
+
+	unsigned long vm_start;		    /* Our start address within vm_mm. */
+	unsigned long vm_end;	 	     /* The first byte after our end address
+					                         within vm_mm. */
+
+	/* linked list of VM areas per task, sorted by address */
+	struct vm_area_struct *vm_next, *vm_prev;
+
+	struct rb_node vm_rb;
+
+	/*
+	 * Largest free memory gap in bytes to the left of this VMA.
+	 * Either between this VMA and vma->vm_prev, or between one of the
+	 * VMAs below us in the VMA rbtree and its ->vm_prev. This helps
+	 * get_unmapped_area find a free area of the right size.
+	 */
+	unsigned long rb_subtree_gap;
+
+	/* Second cache line starts here. */
+
+	struct mm_struct *vm_mm;	/* The address space we belong to. */
+	pgprot_t vm_page_prot;		/* Access permissions of this VMA. */
+	unsigned long vm_flags;		/* Flags, see mm.h. */
+
+	/*
+	 * For areas with an address space and backing store,
+	 * linkage into the address_space->i_mmap interval tree.
+	 */
+	struct {
+		struct rb_node rb;
+		unsigned long rb_subtree_last;
+	} shared;
+
+	/*
+	 * A file's MAP_PRIVATE vma can be in both i_mmap tree and anon_vma
+	 * list, after a COW of one of the file pages.	A MAP_SHARED vma
+	 * can only be in the i_mmap tree.  An anonymous MAP_PRIVATE, stack
+	 * or brk vma (with NULL file) can only be in an anon_vma list.
+	 */
+	struct list_head anon_vma_chain;   /* Serialized by mmap_sem &
+					                           * page_table_lock */
+	struct anon_vma *anon_vma;	       /* Serialized by page_table_lock */
+
+	/* Function pointers to deal with this struct. */
+	const struct vm_operations_struct *vm_ops;
+
+	/* Information about our backing store: */
+	unsigned long vm_pgoff;		/* Offset (within vm_file) in PAGE_SIZE
+					                     units */
+	struct file * vm_file;		/* File we map to (can be NULL). */
+	void * vm_private_data;		/* was vm_pte (shared mem) */
+
+#ifdef CONFIG_SWAP
+	atomic_long_t swap_readahead_info;
+#endif
+#ifndef CONFIG_MMU
+	struct vm_region *vm_region;	/* NOMMU mapping region */
+#endif
+#ifdef CONFIG_NUMA
+	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
+#endif
+	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
+} __randomize_layout;
+"""
+
+
+- Each memory descriptor is associated with a unique interval in the
+process’s address space.
+- The "vm_start" field is the initial (lowest) address in the interval,
+and the "vm_end" field is the first byte after the final (highest) address in the interval.
+- Thus, "vm_end – vm_start" is the length in bytes of the memory area, which exists over
+the interval [vm_start, vm_end) .
+- Intervals in different memory areas in the same address
+space cannot overlap.
+- The "vm_mm" field points to this VMA’s associated "mm_struct".
+- Each VMA is unique to the "mm_struct" with which it is associated.
+- Two threads that share an address space also share all the "vm_area_struct" structures therein.
+
+
+VMA flags
+--------
+- The vm_flags field contains bit flags, defined in "<linux/mm.h>" , that specify the behavior
+of and provide information about the pages contained in the memory area.
+- The VMA flags specify behavior for which the kernel is responsible, not the hardware.
+- "vm_flags" contains information that relates to each page in the memory area,
+or the memory area as a whole, and not specific individual pages.
+
+vm_flags
+=------=
+Flag                  Effect on the VMA and Its Pages
+---------             ------------------------------
+VM_READ               Pages can be read from.
+VM_WRITE              Pages can be written to.
+VM_EXEC               Pages can be executed.
+VM_SHARED             Pages are shared.
+VM_MAYREAD            The VM_READ flag can be set.
+VM_MAYWRITE           The VM_WRITE flag can be set.
+VM_MAYEXEC            The VM_EXEC flag can be set.
+VM_MAYSHARE           The VM_SHARE flag can be set.
+VM_GROWSDOWN          The area can grow downward.
+VM_GROWSUP            The area can grow upward.
+VM_SHM                The area is used for shared memory.
+VM_DENYWRITE          The area maps an unwritable file.
+VM_EXECUTABLE         The area maps an executable file.
+VM_LOCKED             The pages in this area are locked.
+VM_IO                 The area maps a device’s I/O space.
+VM_SEQ_READ           The pages seem to be accessed sequentially.
+VM_RAND_READ          The pages seem to be accessed randomly.
+VM_DONTCOPY           This area must not be copied on fork().
+VM_DONTEXPAND         This area cannot grow via mremap().
+VM_RESERVED           This area must not be swapped out.
+VM_ACCOUNT            This area is an accounted VM object.
+VM_HUGETLB            This area uses hugetlb pages.
+VM_NONLINEAR          This area is a nonlinear mapping.
+
+
+- The VM_READ , VM_WRITE and VM_EXEC flags specify the usual read, write, and execute
+permissions for the pages in this particular memory area.
+- They are combined as needed to form the appropriate
+access permissions that a process accessing this VMA must respect.
+- For example, the object
+code for a process might be mapped with VM_READ and VM_EXEC but not VM_WRITE. On
+the other hand, the data section from an executable object would be mapped VM_READ
+and VM_WRITE , but VM_EXEC would make little sense.  Meanwhile, a read-only memory
+mapped data file would be mapped with only the VM_READ flag.
+
+- The VM_SHARED flag specifies whether the memory area contains a mapping that is
+shared among multiple processes.
+- If the flag is set, it is intuitively called a shared mapping. If
+the flag is not set, only a single process can view this particular mapping, and it is called a
+private mapping.
+
+- The VM_IO flag specifies that this memory area is a mapping of a device’s I/O space.
+This field is typically set by device drivers when mmap() is called on their I/O space. It
+specifies, among other things, that the memory area must not be included in any process’s
+core dump.
+
+- The VM_RESERVED flag specifies that the memory region must not be swapped
+out. It is also used by device driver mappings.
+
+- The VM_SEQ_READ flag provides a hint to the kernel that the application is performing
+sequential (that is, linear and contiguous) reads in this mapping. The kernel can then opt
+to increase the read-ahead performed on the backing file.
+
+- The VM_RAND_READ flag speci-
+fies the exact opposite: that the application is performing relatively random (that is, not
+sequential) reads in this mapping.The kernel can then opt to decrease or altogether dis-
+able read-ahead on the backing file.
+
+- These flags are set via the "madvise()" system call with
+the MADV_SEQUENTIAL and MADV_RANDOM flags, respectively.
+
+
+VMA operations
+--------------
+- The "vm_ops" field in the vm_area_struct structure points to the table of operations asso-
+ciated with a given memory area, which the kernel can invoke to manipulate the VMA.
+- The "vm_area_struct" acts as a generic object for representing any type of memory area,
+and the operations table describes the specific methods that can operate on this particular
+instance of the object.
+- The operations table is represented by "struct vm_operations_struct" and is defined in
+<linux/mm.h> :
+"""
+/*
+ * These are the virtual MM functions - opening of an area, closing and
+ * unmapping it (needed to keep files on disk up-to-date etc), pointer
+ * to the functions called when a no-page or a wp-page exception occurs.
+ */
+struct vm_operations_struct {
+	void (*open)(struct vm_area_struct * area);
+	void (*close)(struct vm_area_struct * area);
+	int (*split)(struct vm_area_struct * area, unsigned long addr);
+	int (*mremap)(struct vm_area_struct * area);
+	vm_fault_t (*fault)(struct vm_fault *vmf);
+	vm_fault_t (*huge_fault)(struct vm_fault *vmf,
+			enum page_entry_size pe_size);
+	void (*map_pages)(struct vm_fault *vmf,
+			pgoff_t start_pgoff, pgoff_t end_pgoff);
+	unsigned long (*pagesize)(struct vm_area_struct * area);
+
+	/* notification that a previously read-only page is about to become
+	 * writable, if an error is returned it will cause a SIGBUS */
+	vm_fault_t (*page_mkwrite)(struct vm_fault *vmf);
+
+	/* same as page_mkwrite when using VM_PFNMAP|VM_MIXEDMAP */
+	vm_fault_t (*pfn_mkwrite)(struct vm_fault *vmf);
+
+	/* called by access_process_vm when get_user_pages() fails, typically
+	 * for use by special VMAs that can switch between memory and hardware
+	 */
+	int (*access)(struct vm_area_struct *vma, unsigned long addr,
+		      void *buf, int len, int write);
+
+	/* Called by the /proc/PID/maps code to ask the vma whether it
+	 * has a special name.  Returning non-NULL will also cause this
+	 * vma to be dumped unconditionally. */
+	const char *(*name)(struct vm_area_struct *vma);
+
+#ifdef CONFIG_NUMA
+	/*
+	 * set_policy() op must add a reference to any non-NULL @new mempolicy
+	 * to hold the policy upon return.  Caller should pass NULL @new to
+	 * remove a policy and fall back to surrounding context--i.e. do not
+	 * install a MPOL_DEFAULT policy, nor the task or system default
+	 * mempolicy.
+	 */
+	int (*set_policy)(struct vm_area_struct *vma, struct mempolicy *new);
+
+	/*
+	 * get_policy() op must add reference [mpol_get()] to any policy at
+	 * (vma,addr) marked as MPOL_SHARED.  The shared policy infrastructure
+	 * in mm/mempolicy.c will do this automatically.
+	 * get_policy() must NOT add a ref if the policy at (vma,addr) is not
+	 * marked as MPOL_SHARED. vma policies are protected by the mmap_sem.
+	 * If no [shared/vma] mempolicy exists at the addr, get_policy() op
+	 * must return NULL--i.e., do not "fallback" to task or system default
+	 * policy.
+	 */
+	struct mempolicy *(*get_policy)(struct vm_area_struct *vma,
+					unsigned long addr);
+#endif
+	/*
+	 * Called by vm_normal_page() for special PTEs to find the
+	 * page for @addr.  This is useful if the default behavior
+	 * (using pte_page()) would not find the correct page.
+	 */
+	struct page *(*find_special_page)(struct vm_area_struct *vma,
+					  unsigned long addr);
+};
+"""
+
+Here’s a description for each individual method:
+
+void open(struct vm_area_struct *area)
+    This function is invoked when the given memory area is added to an address space.
+
+void close(struct vm_area_struct *area)
+    This function is invoked when the given memory area is removed from an
+    address space.
+
+vm_fault_t fault(struct vm_fault *vmf);
+    This function is invoked by the page fault handler when a page that is not present
+    in physical memory is accessed.
+
+vm_fault_t page_mkwrite(struct vm_fault *vmf);
+    This function is invoked by the page fault handler when a page that was read-only
+    is being made writable.
+
+int (*access)(struct vm_area_struct *vma, unsigned long addr,
+	      void *buf, int len, int write);
+    This function is invoked by "access_process_vm()" when "get_user_pages()" fails.
+
+
+Lists and Trees of Memory Areas
+------------------------------
+- Memory areas are accessed via both the "mmap" and the "mm_rb" fields of the
+memory descriptor.These two data structures independently point to all the memory area
+objects associated with the memory descriptor. In fact, they both contain pointers to the
+same "vm_area_struct" structures, merely represented in different ways.
+
+- The first field, "mmap", links together all the memory area objects in a singly linked list.
+Each "vm_area_struct" structure is linked into the list via its "vm_next" field.The areas are
+sorted by ascending address. The first memory area is the "vm_area_struct" structure to
+which mmap points.The last structure points to NULL.
+
+- The second field, "mm_rb", links together all the memory area objects in a red-black tree.
+The root of the red-black tree is "mm_rb", and each "vm_area_struct" structure in this
+address space is linked to the tree via its "vm_rb" field.
+
+- The linked list is used when every node needs to be traversed.The red-black tree is
+used when locating a specific memory area in the address space.
+
+
+Memory Areas in real life
+-------------------------
+
+Atleast the following sections will be present for any C program:
+- there is the text section, data section, and bss.
+- Assuming this process is dynamically linked
+with the C library, these three memory areas also exist for libc.so and again for ld.so.
+- Finally, there is also the process’s stack.
+"""
+$ cat /proc/119507/maps
+55c90d04e000-55c90d04f000 r--p 00000000 fd:00 3684576                    /home/redbuddha/sample
+55c90d04f000-55c90d050000 r-xp 00001000 fd:00 3684576                    /home/redbuddha/sample
+55c90d050000-55c90d051000 r--p 00002000 fd:00 3684576                    /home/redbuddha/sample
+55c90d051000-55c90d052000 r--p 00002000 fd:00 3684576                    /home/redbuddha/sample
+55c90d052000-55c90d053000 rw-p 00003000 fd:00 3684576                    /home/redbuddha/sample
+7fe1a43d7000-7fe1a43fc000 r--p 00000000 fd:02 789886                     /usr/lib/x86_64-linux-gnu/libc-2.31.so
+7fe1a43fc000-7fe1a4574000 r-xp 00025000 fd:02 789886                     /usr/lib/x86_64-linux-gnu/libc-2.31.so
+7fe1a4574000-7fe1a45be000 r--p 0019d000 fd:02 789886                     /usr/lib/x86_64-linux-gnu/libc-2.31.so
+7fe1a45be000-7fe1a45bf000 ---p 001e7000 fd:02 789886                     /usr/lib/x86_64-linux-gnu/libc-2.31.so
+7fe1a45bf000-7fe1a45c2000 r--p 001e7000 fd:02 789886                     /usr/lib/x86_64-linux-gnu/libc-2.31.so
+7fe1a45c2000-7fe1a45c5000 rw-p 001ea000 fd:02 789886                     /usr/lib/x86_64-linux-gnu/libc-2.31.so
+7fe1a45c5000-7fe1a45cb000 rw-p 00000000 00:00 0
+7fe1a45e9000-7fe1a45ea000 r--p 00000000 fd:02 789878                     /usr/lib/x86_64-linux-gnu/ld-2.31.so
+7fe1a45ea000-7fe1a460d000 r-xp 00001000 fd:02 789878                     /usr/lib/x86_64-linux-gnu/ld-2.31.so
+7fe1a460d000-7fe1a4615000 r--p 00024000 fd:02 789878                     /usr/lib/x86_64-linux-gnu/ld-2.31.so
+7fe1a4616000-7fe1a4617000 r--p 0002c000 fd:02 789878                     /usr/lib/x86_64-linux-gnu/ld-2.31.so
+7fe1a4617000-7fe1a4618000 rw-p 0002d000 fd:02 789878                     /usr/lib/x86_64-linux-gnu/ld-2.31.so
+7fe1a4618000-7fe1a4619000 rw-p 00000000 00:00 0
+7fff357d6000-7fff357f7000 rw-p 00000000 00:00 0                          [stack]
+7fff357f8000-7fff357fc000 r--p 00000000 00:00 0                          [vvar]
+7fff357fc000-7fff357fe000 r-xp 00000000 00:00 0                          [vdso]
+ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]
+"""
+
+- The data is in the form:
+"""
+start-end   permission   offset   major:minor   inode   file
+"""
+
+- The pmap(1) utility formats this information in a bit more readable manner.
+- The pmap(1) utility displays a formatted listing of a process’s memory areas. It is a bit more readable
+than the / proc output, but it is the same information. It is found in newer versions of the procps
+package.
+
+
+- The text sections are all readable and executable, which is what you expect
+for object code.
+- The data section and bss (which both contain global
+variables) are marked readable and writable, but not executable.
+- The stack is, naturally,
+readable, writable, and executable(?)
+
+- If a memory region is shared or nonwritable, the kernel keeps only one copy of the
+backing file in memory.
+- If you consider that a nonwritable map-
+ping can never be changed (the mapping is only read from), it is clear that it is safe to load
+the image only once into memory.
+- Only writable and private memory regions need to be kept separate for each instance of the process.
+
+- The memory areas without a mapped file on device 00:00 and inode zero.This is
+the zero page, which is a mapping that consists of all zeros. By mapping the zero page
+over a writable memory area, the area is in effect “initialized” to all zeros.This is impor-
+tant in that it provides a zeroed memory area, which is expected by the bss. Because the
+mapping is not shared, as soon as the process writes to this data, a copy is made (à la copy-
+on-write) and the value updated from zero.
+
+- Each of the memory areas associated with the process corresponds to a
+"vm_area_struct" structure. If the process is not a thread, it has a unique
+"mm_struct" structure referenced from its "task_struct".
+
+
+
+
+Mainpulating Memory Areas
+=========================
+- The kernel often has to perform operations on a memory area.
+- A handful of helper functions are defined to assist these jobs.
+- These functions are all declared in <linux/mm.h> .
+
+find_vma()
+----------
+- The kernel provides a function, find_vma() , for searching for the VMA in which a given
+memory address resides. It is defined in mm/mmap.c :
+"""
+struct vm_area_struct * find_vma(struct mm_struct *mm, unsigned long addr);
+
+/* Look up the first VMA which satisfies  addr < vm_end,  NULL if none. */
+struct vm_area_struct *find_vma(struct mm_struct *mm, unsigned long addr)
+{
+	struct rb_node *rb_node;
+	struct vm_area_struct *vma;
+
+	/* Check the cache first. */
+	vma = vmacache_find(mm, addr);
+	if (likely(vma))
+		return vma;
+
+	rb_node = mm->mm_rb.rb_node;
+
+	while (rb_node) {
+		struct vm_area_struct *tmp;
+
+		tmp = rb_entry(rb_node, struct vm_area_struct, vm_rb);
+
+		if (tmp->vm_end > addr) {
+			vma = tmp;
+			if (tmp->vm_start <= addr)
+				break;
+			rb_node = rb_node->rb_left;
+		} else
+			rb_node = rb_node->rb_right;
+	}
+
+	if (vma)
+		vmacache_update(addr, vma);
+	return vma;
+}
+
+EXPORT_SYMBOL(find_vma);
+"""
+
+- This function searches the given address space for the first memory area whose "vm_end"
+field is greater than "addr".
+- In other words, this function finds the first memory area that
+contains "addr" or begins at an address greater than "addr".
+- If no such memory area exists, the function returns NULL .
+- Otherwise, a pointer to the "vm_area_struct" structure is returned.
+- Note that because the returned VMA may start at an address greater than "addr",
+the given address does not necessarily lie inside the returned VMA.
+
+- The result of the "find_vma()"" function is cached in the "mmap_cache" field of the memory descriptor.
+Because of the probability of an operation on one VMA being followed by more opera-
+tions on that same VMA, the cached results have a decent hit rate (about 30–40% in prac-
+tice).
+
+- The initial check of "mmap_cache" tests whether the cached VMA contains the desired
+address.
+- If the cache does not contain the desired VMA, the function must search the red-black
+tree.
+- If the current VMA’s "vm_end" is larger than "addr", the function follows the left child;
+otherwise, it follows the right child.
+- The function terminates as soon as a VMA is found that contains "addr".
+- If such a VMA is not found, the function continues traversing the tree
+and returns the first VMA it found that starts after "addr".
+- If no VMA is ever found, NULL is returned.
+
+
+
+find_vma_prev()
+---------------
+- The find_vma_prev() function works the same as find_vma() , but it also returns the
+last VMA before addr.
+- The function is also defined in mm/mmap.c and declared in <linux/mm.h>:
+"""
+/*
+ * Same as find_vma, but also return a pointer to the previous VMA in *pprev.
+ */
+struct vm_area_struct *
+find_vma_prev(struct mm_struct *mm, unsigned long addr,
+			struct vm_area_struct **pprev)
+{
+	struct vm_area_struct *vma;
+
+	vma = find_vma(mm, addr);
+	if (vma) {
+		*pprev = vma->vm_prev;
+	} else {
+		struct rb_node *rb_node = rb_last(&mm->mm_rb);
+
+		*pprev = rb_node ? rb_entry(rb_node, struct vm_area_struct, vm_rb) : NULL;
+	}
+	return vma;
+}
+"""
+- The pprev argument stores a pointer to the VMA preceding addr .
+
+
+
+find_vma_intersection()
+------------------------
+- The find_vma_intersection() function returns the first VMA that overlaps a given
+address interval.
+- The function is defined in <linux/mm.h> because it is inline:
+"""
+/* Look up the first VMA which intersects the interval start_addr..end_addr-1,
+   NULL if none.  Assume start_addr < end_addr. */
+static inline struct vm_area_struct * find_vma_intersection(struct mm_struct * mm, unsigned long start_addr, unsigned long end_addr)
+{
+	struct vm_area_struct * vma = find_vma(mm,start_addr);
+
+	if (vma && end_addr <= vma->vm_start)
+		vma = NULL;
+	return vma;
+}
+"""
+- The first parameter is the address space to search, "start_addr" is the start of the inter-
+val, and "end_addr" is the end of the interval.
+- If "find_vma()" returns NULL , so would find_vma_intersection() .
+- If "find_vma()" returns a valid VMA, however, find_vma_intersection() returns the same
+VMA only if it does not start after the end of the given address range. If the returned
+memory area does start after the end of the given address range, the function returns
+NULL.
+
+
+
+mmap() and do_mmap()
+--------------------
+- The do_mmap() function is used by the kernel to create a new linear address interval.
+- If the created address interval is adjacent to an existing address interval, and if they share the same per-
+missions, the two intervals are merged into one.
+- If this is not possible, a new VMA is created.
+
+- "do_mmap()"" is the function used to add an address interval to a process’s
+address space—whether that means expanding an existing memory area or creating a new one.
+
+- The do_mmap() function is declared in <linux/mm.h> and defined in <mm/mmap.c>:
+"""
+/*
+ * The caller must hold down_write(&current->mm->mmap_sem).
+ */
+unsigned long do_mmap(struct file *file, unsigned long addr,
+			unsigned long len, unsigned long prot,
+			unsigned long flags, vm_flags_t vm_flags,
+			unsigned long pgoff, unsigned long *populate,
+			struct list_head *uf)
+{
+	struct mm_struct *mm = current->mm;
+	int pkey = 0;
+
+	*populate = 0;
+  ...
+  ...
+  """
+
+- This function maps the file specified by "file" at offset "pgoff" for length "len".
+- If the "file" parameter is NULL and offset is zero, the mapping will not be backed by a file.
+In that case, this is called an "anonymous mapping".
+- If a file and offset are provided, the mapping is called a "file-backed mapping".
+- The "addr" function optionally specifies the initial address from which to start the
+search for a free interval.
+- The "prot" parameter specifies the access permissions for pages in the memory area.
+- The possible permission flags are defined in <asm/mman.h> and are unique to each supported
+architecture.
+
+Page Protection Flags
+=-------------------=
+Flag          Effect on the Pages in the New Interval
+----------    ----------------------------
+PROT_READ     Corresponds to VM_READ
+PROT_WRITE    Corresponds to VM_WRITE
+PROT_EXEC     Corresponds to VM_EXEC
+PROT_NONE     Cannot access page
+
+- The "flags" parameter specifies flags that correspond to the remaining VMA flags.
+- These flags specify the type and change the behavior of the mapping.
+- They are also defined in <asm/mman.h>:
+
+Map Type Flags
+=------------=
+Flag                Effect on the New Interval
+---------           --------------------------
+MAP_SHARED          The mapping can be shared.
+MAP_PRIVATE         The mapping cannot be shared.
+MAP_FIXED           The new interval must start at the given address addr .
+MAP_ANONYMOUS       The mapping is not file-backed, but is anonymous.
+MAP_GROWSDOWN       Corresponds to VM_GROWSDOWN .
+MAP_DENYWRITE       Corresponds to VM_DENYWRITE .
+MAP_EXECUTABLE      Corresponds to VM_EXECUTABLE .
+MAP_LOCKED          Corresponds to VM_LOCKED .
+MAP_NORESERVE       No need to reserve space for the mapping.
+MAP_POPULATE        Populate (prefault) page tables.
+MAP_NONBLOCK        Do not block on I/O.
+
+- If any of the parameters are invalid, "do_mmap()" returns a negative value.
+
+- Otherwise, a suitable interval in virtual memory is located.
+
+- If possible,the interval is merged with an adjacent memory area.
+- Otherwise, a new "vm_area_struct" structure is allocated from the
+"vm_area_cachep" slab cache, and the new memory area is added to the address space’s
+linked list and red-black tree of memory areas via the "vma_link()" function.
+
+- Next, the "total_vm" field in the memory descriptor is updated.
+- Finally, the function returns the initial address of the newly created address interval.
+
+- The do_mmap() functionality is exported to user-space via the mmap() system call.
+- The mmap() system call is defined as:
+"""
+void* mmap2(void *start, size_t length, int prot,
+            int flags, int fd, off_t pgoff)
+"""
+
+
+mmap() and mmap2()
+Note:
+The original mmap() took an offset in bytes as the last parameter; the current mmap2() receives
+the offset in pages.This enables larger files with larger offsets to be mapped.The original
+mmap() , as specified by POSIX, is available from the C library as mmap() , but is no longer
+implemented in the kernel proper, whereas the new version is available as mmap2() . Both
+library calls use the mmap2() system call, with the original mmap() converting the offset
+from bytes to pages.
+
+
+
+munmap() and do_munmap()
+------------------------
+- The do_munmap() function removes an address interval from a specified process address
+space.
+- The function is declared in <linux/mm.h> and defined in mm/mmap.c:
+"""
+int do_munmap(struct mm_struct *mm, unsigned long start, size_t len,
+	      struct list_head *uf)
+{
+	return __do_munmap(mm, start, len, uf, false);
+}
+"""
+
+- The first parameter specifies the address space from which the interval starting at
+address "start" of length "len" bytes is removed.
+- On success, zero is returned. Otherwise, a negative error code is returned.
+
+- The "munmap()"" system call is exported to user-space as a means to enable processes to
+remove address intervals from their address space; it is the complement of the mmap() sys-
+tem call:
+"""
+int munmap(void *start, size_t length)
+"""
+
+- The system call is defined in mm/mmap.c and acts as a simple wrapper to do_munmap():
+"""
+asmlinkage long sys_munmap(unsigned long addr, size_t len)
+
+SYSCALL_DEFINE2(munmap, unsigned long, addr, size_t, len)
+{
+	addr = untagged_addr(addr);
+	profile_munmap(addr);
+	return __vm_munmap(addr, len, true);
+}
+"""
+
+
+
+Page Tables
+-----------
+- Although applications operate on virtual memory mapped to physical addresses, proces-
+sors operate directly on those physical addresses.
+
+- When an application
+accesses a virtual memory address, it must first be converted to a physical address before
+the processor can resolve the request. Performing this lookup is done via page tables.
+
+- Page tables work by splitting the virtual address into chunks.
+- Each chunk is used as an index into a table.
+- The table points to either another table or the associated physical page.
+
+- In Linux, the page tables consist of three levels.
+- The multiple levels enable a sparsely populated address space, even on 64-bit machines.
+
+- Linux uses three levels of page tables even on architectures that do not
+support three levels in hardware.
+
+
+- The top-level page table is the page global directory (PGD), which consists of an array
+of "pgd_t" types. On most architectures, the "pgd_t" type is an "unsigned long". The entries
+in the PGD point to entries in the second-level directory, the PMD.
+
+- The second-level page table is the page middle directory (PMD), which is an array of
+"pmd_t" types.The entries in the PMD point to entries in the PTE.
+
+- The final level is called simply the page table and consists of page table entries(PTE) of type
+"pte_t". Page table entries point to physical pages.
+
+
+struct mm_struct ----> PGD ----> PMD ----> PTE ----> struct page ----> physical page
+
+- In most architectures, page table lookups are handled (at least to some degree) by hard-
+ware.
+
+- Each process has its own page tables (threads share them, of course).The "pgd" field of
+the memory descriptor points to the process’s page global directory.
+
+- Manipulating and traversing page tables requires the "page_table_lock",
+which is located inside the associated memory descriptor.
+"""
+spinlock_t page_table_lock; /* Protects page tables and some
+           * counters
+           */
+"""
+
+- Page table data structures are quite architecture-dependent and thus are defined in
+<asm/page.h> .
+"""
+typedef struct { pgdval_t pgd; } pgd_t;
+"""
+
+
+- Most processors implement a translation lookaside buffer, or simply TLB,
+which acts as a hardware cache of virtual-to-physical mappings.
+
+- When accessing a virtual
+address, the processor first checks whether the mapping is cached in the TLB. If there is a
+hit, the physical address is immediately returned. Otherwise, if there is a miss, the page
+tables are consulted for the corresponding physical address.

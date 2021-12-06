@@ -1,0 +1,319 @@
+Page Cache
+==========
+- The Linux kernel implements a disk cache called the page cache.The goal of this cache is
+to minimize disk I/O by storing data in physical memory that would otherwise require
+disk access.
+
+- First, disk access is several orders of magnitude slower than memory access—
+milliseconds versus nanoseconds.
+
+- Second, data accessed once will, with a high likelihood, find itself accessed again in the near
+future.This principle—that access to a particular piece of data tends to be clustered in
+time—is called "temporal locality", which ensures that if data is cached on its first access, there
+is a high probability of a cache hit (access to data in the cache) in the near future.
+
+
+Approaches to Caching
+--------------------
+- The page cache consists of physical pages in RAM, the contents of which correspond to
+physical blocks on a disk.
+- The size of the page cache is dynamic; it can grow to consume
+any free memory and shrink to relieve memory pressure.
+- We call the storage device being
+cached the "backing store" because the disk stands behind the cache as the source of the
+canonical version of any cached data.
+
+- Whenever the kernel begins a read operation—for
+example, when a process issues the read() system call—it first checks if the requisite data
+is in the page cache. If it is, the kernel can forgo accessing the disk and read the data
+directly out of RAM.This is called a "cache hit".
+
+- If the data is not in the cache, called a "cache
+miss", the kernel must schedule block I/O operations to read the data off the disk.After
+the data is read off the disk, the kernel populates the page cache with the data so that any
+subsequent reads can occur out of the cache.
+
+- The page cache can hold some files in their entirety while storing only a page or two of other files.
+
+
+Write Caching
+-------------
+
+Three approaches possible:
+- no-write caching
+- write through caching
+- write-back (linux)
+
+- In a write-back cache,
+processes perform write operations directly into the page cache.
+- The backing store is not immediately or directly updated.
+- Instead, the written-to pages in the page cache are
+marked as "dirty" and are added to a "dirty list".
+- Periodically, pages in the dirty list are written
+back to disk in a process called "writeback", bringing the on-disk copy in line with the in-
+memory cache. The pages are then marked as no longer dirty.
+
+- A write-back is generally considered superior to a write-through strategy because by deferring the
+writes to disk, they can be coalesced and performed in bulk at a later time.The downside
+is complexity.
+
+
+Cache eviction
+--------------
+- The final piece to caching is the process by which data is removed from the cache, either
+to make room for more relevant cache entries or to shrink the cache to make available
+more RAM for other uses.This process, and the strategy that decides what to remove, is
+called "cache eviction".
+- Linux’s cache eviction works by selecting clean (not dirty) pages and
+simply replacing them with something else.
+- If insufficient clean pages are in the cache, the
+kernel forces a writeback to make more clean pages available.
+
+- The ideal eviction strategy evicts the pages least likely to be used in the
+future.
+ clairvoyant algorithm -
+A clairvoyant algorithm is a (usually hypothetical) algorithm that can look into the future
+to guarantee that it makes the best possible decisions.
+
+LRU:
+- An LRU eviction strategy requires keeping track of when each page is accessed (or at least sorting a list of pages by
+access time) and evicting the pages with the oldest timestamp (or at the start of the sorted list).
+- This strategy works well because the longer a piece of cached data sits idle, the less
+likely it is to be accessed in the near future.
+
+The two-list strategy:
+- Linux, therefore, implements a modified version of LRU, called the two-list strategy.
+- Instead of maintaining one list, the LRU list, Linux keeps two lists: the active list and the inactive
+list.
+- Pages on the active list are considered “hot” and are not available for eviction.
+- Pages on the inactive list are available for cache eviction.
+- Pages are placed on the active list only
+when they are accessed while already residing on the inactive list.
+- Both lists are maintained in a pseudo-LRU manner: Items are added to the tail and
+removed from the head, as with a queue.
+- The lists are kept in balance: If the active list becomes much larger than the inac-
+tive list, items from the active list’s head are moved back to the inactive list, making them
+available for eviction.The two-list strategy solves the only-used-once failure in a classic
+LRU and also enables
+
+- The two-list strategy solves the only-used-once failure in a classic
+LRU and also enables simpler, pseudo-LRU semantics to perform well.This two-list
+approach is also known as LRU/2; it can be generalized to n-lists, called LRU/n.
+
+
+The Linux Page Cache
+====================
+- The page cache, as its name suggests, is a cache of pages in RAM.
+- The pages originate from reads and writes of regular filesystem files,
+block device files, and memory-mapped files.
+
+The address_space object
+------------------------
+- A page in the page cache can consist of multiple noncontiguous physical disk blocks.
+- Checking the page cache to see whether certain data has been cached is made difficult
+because of this noncontiguous layout of the blocks that constitute each page.
+- For example, a physical page is 4KB in size on the x86 architecture, whereas a disk block on many
+filesystems can be as small as 512 bytes. Therefore, 8 blocks might fit in a single page. The blocks
+need not be contiguous because the files might be laid out all over the disk.
+
+- The Linux page cache aims to cache any page-
+based object, which includes many forms of files and memory mappings.
+- To maintain a generic page cache—one not
+tied to physical files or the inode structure—the Linux page cache uses a new object to
+manage entries in the cache and page I/O operations.That object is the "address_space"
+structure.
+- The file has only one "address_space" structure.
+- The address_space structure is defined in <linux/fs.h>:
+"""
+/**
+ * struct address_space - Contents of a cacheable, mappable object.
+ * @host: Owner, either the inode or the block_device.
+ * @i_pages: Cached pages.
+ * @gfp_mask: Memory allocation flags to use for allocating pages.
+ * @i_mmap_writable: Number of VM_SHARED mappings.
+ * @nr_thps: Number of THPs in the pagecache (non-shmem only).
+ * @i_mmap: Tree of private and shared mappings.
+ * @i_mmap_rwsem: Protects @i_mmap and @i_mmap_writable.
+ * @nrpages: Number of page entries, protected by the i_pages lock.
+ * @nrexceptional: Shadow or DAX entries, protected by the i_pages lock.
+ * @writeback_index: Writeback starts here.
+ * @a_ops: Methods.
+ * @flags: Error bits and flags (AS_*).
+ * @wb_err: The most recent error which has occurred.
+ * @private_lock: For use by the owner of the address_space.
+ * @private_list: For use by the owner of the address_space.
+ * @private_data: For use by the owner of the address_space.
+ */
+struct address_space {
+	struct inode		*host;
+	struct xarray		i_pages;
+	gfp_t			gfp_mask;
+	atomic_t		i_mmap_writable;
+#ifdef CONFIG_READ_ONLY_THP_FOR_FS
+	/* number of thp, only for non-shmem files */
+	atomic_t		nr_thps;
+#endif
+	struct rb_root_cached	i_mmap;
+	struct rw_semaphore	i_mmap_rwsem;
+	unsigned long		nrpages;
+	unsigned long		nrexceptional;
+	pgoff_t			writeback_index;
+	const struct address_space_operations *a_ops;
+	unsigned long		flags;
+	errseq_t		wb_err;
+	spinlock_t		private_lock;
+	struct list_head	private_list;
+	void			*private_data;
+} __attribute__((aligned(sizeof(long)))) __randomize_layout;
+"""
+
+- The "i_mmap" field is a priority search tree of all shared and private mappings in this
+address space. The kernel implementation is based on the radix priority search tree.
+"""
+struct rb_root_cached	i_mmap;
+"""
+- While a cached file is associated with one "address_space" structure, it can
+have many vm_area_struct structures—a one-to-many mapping from the physical pages
+to many virtual pages.
+- The "i_mmap" field allows the kernel to efficiently find the mappings
+associated with this cached file.
+
+- There are a total of "nrpages" in the address space.
+"""
+unsigned long		nrpages;
+"""
+
+- The "address_space" is associated with some kernel object. Normally, this is an inode.
+If so, the "host" field points to the associated inode.
+"""
+struct inode		*host;
+"""
+- The "host" field is NULL if the associated object is not an inode—for example, if the address_space is associated with the
+swapper.
+
+
+The address_space operations
+----------------------------
+- The "a_ops" field points to the address space operations table.
+- The operations table is represented by struct
+address_space_operations and is also defined in <linux/fs.h> :
+"""
+struct address_space_operations {
+	int (*writepage)(struct page *page, struct writeback_control *wbc);
+	int (*readpage)(struct file *, struct page *);
+
+	/* Write back some dirty pages from this mapping. */
+	int (*writepages)(struct address_space *, struct writeback_control *);
+
+	/* Set a page dirty.  Return true if this dirtied it */
+	int (*set_page_dirty)(struct page *page);
+
+	/*
+	 * Reads in the requested pages. Unlike ->readpage(), this is
+	 * PURELY used for read-ahead!.
+	 */
+	int (*readpages)(struct file *filp, struct address_space *mapping,
+			struct list_head *pages, unsigned nr_pages);
+	void (*readahead)(struct readahead_control *);
+
+	int (*write_begin)(struct file *, struct address_space *mapping,
+				loff_t pos, unsigned len, unsigned flags,
+				struct page **pagep, void **fsdata);
+	int (*write_end)(struct file *, struct address_space *mapping,
+				loff_t pos, unsigned len, unsigned copied,
+				struct page *page, void *fsdata);
+
+	/* Unfortunately this kludge is needed for FIBMAP. Don't use it */
+	sector_t (*bmap)(struct address_space *, sector_t);
+	void (*invalidatepage) (struct page *, unsigned int, unsigned int);
+	int (*releasepage) (struct page *, gfp_t);
+	void (*freepage)(struct page *);
+	ssize_t (*direct_IO)(struct kiocb *, struct iov_iter *iter);
+	/*
+	 * migrate the contents of a page to the specified target. If
+	 * migrate_mode is MIGRATE_ASYNC, it must not block.
+	 */
+	int (*migratepage) (struct address_space *,
+			struct page *, struct page *, enum migrate_mode);
+	bool (*isolate_page)(struct page *, isolate_mode_t);
+	void (*putback_page)(struct page *);
+	int (*launder_page) (struct page *);
+	int (*is_partially_uptodate) (struct page *, unsigned long,
+					unsigned long);
+	void (*is_dirty_writeback) (struct page *, bool *, bool *);
+	int (*error_remove_page)(struct address_space *, struct page *);
+
+	/* swapfile support */
+	int (*swap_activate)(struct swap_info_struct *sis, struct file *file,
+				sector_t *span);
+	void (*swap_deactivate)(struct file *file);
+};
+"""
+
+- Each backing store describes how it interacts with the page cache via its
+own "address_space_operations". For example, the ext3 filesystem defines its operations
+in "fs/ext3/inode.c".Thus, these are the functions that manage the page cache, including
+the most common: reading pages into the cache and updated data in the cache.Thus, the
+readpage() and writepage() methods are most important.
+
+- First, the Linux kernel attempts to
+find the request data in the page cache.The "find_get_page()"" method is used to perform
+this check; it is passed an "address_space" and page offset.These values search the page
+cache for the desired data:
+"""
+page = find_get_page(mapping, index);
+"""
+- Here, mapping is the given "address_space" and "index" is the desired offset into the
+file, in pages.
+
+- If the page does not exist in the cache, "find_get_page()"" returns NULL and a new page is
+allocated and added to the page cache:
+"""
+struct page *page;
+int error;
+
+/* allocate the page ... */
+page = page_cache_alloc_cold(mapping);
+
+if (!page)
+    /* error allocating memory */
+/* ... and then add it to the page cache */
+error = add_to_page_cache_lru(page, mapping, index, GFP_KERNEL);
+
+if (error)
+/* error adding page to page cache */
+"""
+
+- Finally, the requested data can be read from disk, added to the page cache, and
+returned to the user:
+"""
+error = mapping->a_ops->readpage(file, page);
+"""
+
+
+- Write operations are a bit different. For file mappings, whenever a page is modified,
+the VM simply calls
+"""
+SetPageDirty(page);
+"""
+
+- The kernel later writes the page out via the "writepage()" method.
+
+- Write operations
+on specific files are more complicated.The generic write path in mm/filemap.c performs
+the following steps(deprecated):
+"""
+page = __grab_cache_page(mapping, index, &cached_page, &lru_pvec);
+status = a_ops->prepare_write(file, page, offset, offset+bytes);
+page_fault = filemap_copy_from_user(page, offset, buf, bytes);
+status = a_ops->commit_write(file, page, offset, offset+bytes);
+"""
+
+- First, the page cache is searched for the desired page.
+- If it is not in the cache, an entry is allocated and added.
+- Next, the kernel sets up the write request and the data is copied
+from user-space into a kernel buffer.
+- Finally, the data is written to disk.
+
+- Because the previous steps are performed during all page I/O operations, all page I/O
+is guaranteed to go through the page cache.

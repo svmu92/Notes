@@ -1,0 +1,534 @@
+
+Layered architecture
+
+
+n_tty.c//tty_io.c
+
+
+
+
+
+
+
+- Major numbers are present in "include/uapi/linux/major.h".
+
+"""
+/*
+ * This file has definitions for major device numbers.
+ * For the device number assignments, see Documentation/admin-guide/devices.rst.
+ */
+
+#define UNNAMED_MAJOR		0
+#define MEM_MAJOR		1
+#define RAMDISK_MAJOR		1
+#define FLOPPY_MAJOR		2
+#define PTY_MASTER_MAJOR	2
+#define IDE0_MAJOR		3
+#define HD_MAJOR		IDE0_MAJOR
+#define PTY_SLAVE_MAJOR		3
+#define TTY_MAJOR		4
+#define TTYAUX_MAJOR		5
+...
+...
+"""
+
+- tty major number = 4
+
+- struct uart_drvier
+
+- Example code from "drivers/tty/serial/8250_core.c"
+"""
+static struct uart_driver serial8250_reg = {
+        .owner                  = THIS_MODULE,
+        .driver_name            = "serial",
+        .dev_name               = "ttyS",
+        .major                  = TTY_MAJOR,
+        .minor                  = 64,
+        .cons                   = SERIAL8250_CONSOLE,
+};
+"""
+
+
+- struct uart_port - One instance of this structure exists for each port owned by the UART driver:
+"""
+struct uart_port {
+	spinlock_t		lock;			/* port lock */
+	unsigned long		iobase;			/* in/out[bwl] */
+	unsigned char __iomem	*membase;		/* read/write[bwl] */
+	unsigned int		(*serial_in)(struct uart_port *, int);
+	void			(*serial_out)(struct uart_port *, int, int);
+  ...
+  ...
+  unsigned int		irq;			/* irq number */
+  unsigned long		irqflags;		/* irq flags  */
+  unsigned int		uartclk;		/* base uart clock */
+  unsigned int		fifosize;		/* tx fifo size */
+  unsigned char		x_char;			/* xon/xoff char */
+  unsigned char		regshift;		/* reg offset shift */
+  unsigned char		iotype;			/* io access style */
+  unsigned char		quirks;			/* internal quirks */
+  ...
+"""
+
+
+- Example code from "drivers/tty/serial/8250_core.c"
+"""
+int __init early_serial_setup(struct uart_port *port)
+{
+        struct uart_port *p;
+
+        if (port->line >= ARRAY_SIZE(serial8250_ports) || nr_uarts == 0)
+                return -ENODEV;
+
+        serial8250_isa_init_ports();
+        p = &serial8250_ports[port->line].port;
+        p->iobase       = port->iobase;
+        p->membase      = port->membase;
+        p->irq          = port->irq;
+        p->irqflags     = port->irqflags;
+        p->uartclk      = port->uartclk;
+        p->fifosize     = port->fifosize;
+        p->regshift     = port->regshift;
+        p->iotype       = port->iotype;
+        p->flags        = port->flags;
+        p->mapbase      = port->mapbase;
+        p->mapsize      = port->mapsize;
+        p->private_data = port->private_data;
+        p->type         = port->type;
+        p->line         = port->line;
+
+        serial8250_set_defaults(up_to_u8250p(p));
+        ...
+"""
+
+
+- struct uart_ops - This is a superset of entry points that each UART driver has to support and describes
+the operations that can be done on physical hardware. The methods in this structure are invoked by the
+tty layer:
+"""
+/*
+ * This structure describes all the operations that can be done on the
+ * physical hardware.  See Documentation/driver-api/serial/driver.rst for details.
+ */
+struct uart_ops {
+	unsigned int	(*tx_empty)(struct uart_port *);
+	void		(*set_mctrl)(struct uart_port *, unsigned int mctrl);
+	unsigned int	(*get_mctrl)(struct uart_port *);
+	void		(*stop_tx)(struct uart_port *);
+	void		(*start_tx)(struct uart_port *);
+	void		(*throttle)(struct uart_port *);
+	void		(*unthrottle)(struct uart_port *);
+	void		(*send_xchar)(struct uart_port *, char ch);
+	void		(*stop_rx)(struct uart_port *);
+  ...
+  ...
+  void		(*release_port)(struct uart_port *);
+
+	/*
+	 * Request IO and memory resources used by the port.
+	 * This includes iomapping the port if necessary.
+	 */
+	int		(*request_port)(struct uart_port *);
+	void		(*config_port)(struct uart_port *, int);
+	int		(*verify_port)(struct uart_port *, struct serial_struct *);
+	int		(*ioctl)(struct uart_port *, unsigned int, unsigned long);
+  ...
+"""
+
+
+- There are two important steps that a UART driver has to do to tie itself with the kernel:
+
+
+1. Register with the serial core by calling
+"""
+uart_register_driver(struct uart_driver *);
+"""
+
+- From 8250_core.c
+"""
+serial8250_reg.nr = UART_NR;
+ret = uart_register_driver(&serial8250_reg);
+"""
+
+
+2. Invoke
+"""
+uart_add_one_port(struct uart_driver * , struct uart_port *)
+"""
+to register each individual port that it supports.
+
+- Note that some drivers use the wrapper registration function serial8250_register_port(struct uart_port *) , which
+internally invokes uart_add_one_port() .
+"""
+static void __init
+serial8250_register_ports(struct uart_driver *drv, struct device *dev)
+{
+        int i;
+
+        for (i = 0; i < nr_uarts; i++) {
+                struct uart_8250_port *up = &serial8250_ports[i];
+
+                if (up->port.type == PORT_8250_CIR)
+                        continue;
+
+                if (up->port.dev)
+                        continue;
+
+                up->port.dev = dev;
+
+                serial8250_apply_quirks(up);
+                uart_add_one_port(drv, &up->port);
+        }
+}
+"""
+
+
+
+- A platform is a pseudo bus usually used to tie lightweight devices integrated into SoCs, with the Linux device model.
+
+- A platform consists of:
+1. A platform device - The architecture-specific setup code adds the platform device using
+platform_device_register() or its simpler version, platform_device_register_simple() . You may
+also register multiple platform devices at one shot using platform_add_devices() .
+- platform device registrations are usually done during boot-time board setup.
+
+The platform_device structure defined in include/linux/platform_device.h represents a platform device:
+"""
+struct platform_device {
+	const char	*name;
+	int		id;
+	bool		id_auto;
+	struct device	dev;
+	u64		platform_dma_mask;
+	struct device_dma_parameters dma_parms;
+	u32		num_resources;
+	struct resource	*resource;
+
+	const struct platform_device_id	*id_entry;
+	char *driver_override; /* Driver name to force a match */
+
+	/* MFD cell pointer */
+	struct mfd_cell *mfd_cell;
+
+	/* arch specific additions */
+	struct pdev_archdata	archdata;
+};
+"""
+
+2. A platform driver - The platform driver registers itself into the platform using
+platform_driver_register() . The platform_driver structure, also defined in
+include/linux/platform_device.h , represents a platform driver:
+"""
+struct platform_driver {
+	int (*probe)(struct platform_device *);
+	int (*remove)(struct platform_device *);
+	void (*shutdown)(struct platform_device *);
+	int (*suspend)(struct platform_device *, pm_message_t state);
+	int (*resume)(struct platform_device *);
+	struct device_driver driver;
+	const struct platform_device_id *id_table;
+	bool prevent_deferred_probe;
+};
+"""
+
+
+
+- When a uart driver is registered with uart_register_driver(), it appears in /proc/tty/drivers file:
+"""
+$ sudo cat /proc/tty/drivers
+[sudo] password for XXXXXXX:
+/dev/tty             /dev/tty        5       0 system:/dev/tty
+/dev/console         /dev/console    5       1 system:console
+/dev/ptmx            /dev/ptmx       5       2 system
+/dev/vc/0            /dev/vc/0       4       0 system:vtmaster
+rfcomm               /dev/rfcomm   216 0-255 serial
+dbc_serial           /dev/ttyDBC   241       0 serial
+ttyprintk            /dev/ttyprintk   5       3 console
+max310x              /dev/ttyMAX   204 209-224 serial
+serial               /dev/ttyS       4 64-111 serial
+pty_slave            /dev/pts      136 0-1048575 pty:slave
+pty_master           /dev/ptm      128 0-1048575 pty:master
+unknown              /dev/tty        4 1-63 console
+"""
+
+
+Writing a uart driver:
+1) First registers with the serial core using uart_register_driver(). When this is done,
+you will find a new line starting in /proc/tty/drivers .
+2) The driver registers platform devices using platform_device_register_simple() or platform_device_alloc() .
+3) Following this, the driver registers platform driver entry points (probe() , remove() ,
+suspend() , and resume() ) using platform_driver_register() .
+4) Because of the matching name in platform device and platform driver, probe() is called.
+The probe entry point adds the associated port using uart_add_one_port().
+5) This triggers invocation of the config_port() entry point (part of the uart_ops structure)
+that claims and maps the register space.
+6) Claiming the IRQ, however, is deferred until an application opens the port. The IRQ is freed when the
+application closes the port.
+
+
+Sample flow for usb based uart:
+"""
+Module load
+-----------
+usb_uart_init()
+uart_register_driver()
+usb_uart_probe()
+uart_add_one_port()
+usb_uart_config_port()
+request_mem_region()
+
+Module Unload
+-------------
+usb_uart_exit()
+usb_unregister_driver()
+usb_uart_remove()
+uart_remove_one_port()
+usb_uart_release_port()
+release_mem_region()
+
+Open /dev/ttyUUX
+----------------
+usb_uart_startup()
+request_irq()
+
+Close /dev/ttyUUX
+-----------------
+usb_uart_shutdown()
+free_irq()
+"""
+
+
+- In the transmit path, the driver collects egress data from the circular buffer associated with the UART port. Data
+is present in port->state->xmit.buf[port->state->xmit.tail].
+
+In the receive path, the driver pushes data collected to the associated tty driver using
+tty_insert_flip_char() and tty_flip_buffer_push().
+
+
+
+
+TTY drivers
+----------
+Three structures are important for their operation:
+
+1. struct tty_struct defined in include/linux/tty.h. This structure contains all state information associated
+with an open tty.
+"""
+struct tty_struct {
+	int	magic;
+	struct kref kref;
+	struct device *dev;
+	struct tty_driver *driver;
+	const struct tty_operations *ops;
+	int index;
+  ...
+  struct tty_ldisc *ldisc;
+  ...
+  char name[64];
+  struct pid *pgrp;		/* Protected by ctrl lock */
+  /*
+   * Writes protected by both ctrl lock and legacy mutex, readers must use
+   * at least one of them.
+   */
+  struct pid *session;
+  unsigned long flags;
+  int count;
+  ...
+  wait_queue_head_t write_wait;
+	wait_queue_head_t read_wait;
+  ...
+  struct tty_port *port;
+} __randomize_layout;
+"""
+
+
+2. a buffer header (tty_bufhead) and a buffer list (tty_buffer)
+
+struct tty_bufhead -
+"""
+struct tty_bufhead {
+	struct tty_buffer *head;	/* Queue head */
+	struct work_struct work;
+	struct mutex	   lock;
+	atomic_t	   priority;
+	struct tty_buffer sentinel;
+	struct llist_head free;		/* Free queue head */
+	atomic_t	   mem_used;    /* In-use buffers excluding free list */
+	int		   mem_limit;
+	struct tty_buffer *tail;	/* Active buffer */
+};
+"""
+
+- struct tty_buffer
+"""
+struct tty_buffer {
+	union {
+		struct tty_buffer *next;
+		struct llist_node free;
+	};
+	int used;
+	int size;
+	int commit;
+	int read;
+	int flags;
+	/* Data points here */
+	unsigned long data[];
+};
+"""
+
+
+3. struct tty_driver defined in include/linux/tty_driver.h. This specifies the programming interface
+between tty drivers and higher layers:
+"""
+struct tty_driver {
+	int	magic;		/* magic number for this structure */
+	struct kref kref;	/* Reference management */
+	struct cdev **cdevs;
+	struct module	*owner;
+	const char	*driver_name;
+	const char	*name;
+	int	name_base;	/* offset of printed name */
+	int	major;		/* major device number */
+	int	minor_start;	/* start of minor device number */
+	unsigned int	num;	/* number of devices allocated */
+  ...
+  /*
+	 * Driver methods
+	 */
+
+	const struct tty_operations *ops;
+	struct list_head tty_drivers;
+} __randomize_layout;
+"""
+
+
+
+- Like a UART driver, a tty driver needs to perform two steps to register itself with the kernel:
+
+1. Call tty_register_driver(struct tty_driver *tty_d) to register itself with the tty core.
+"""
+pty.c
+--------
+
+...
+if (tty_register_driver(pty_driver))
+        panic("Couldn't register pty driver");
+if (tty_register_driver(pty_slave_driver))
+        panic("Couldn't register pty slave driver");
+...
+"""
+
+2. Call
+"""
+tty_register_device(struct tty_driver *tty_d,unsigned device_index, struct device *device)
+"""
+to register each individual tty that it supports.
+
+"""
+vcc.c
+-----
+
+/* Register the device using VCC table index as TTY index */
+dev = tty_register_device(vcc_tty_driver, port->index, &vdev->dev);
+...
+"""
+
+
+
+- To work with a system console on a Linux desktop, you need the services of virtual terminals (VTs) if you
+are in text mode or pseudo terminals (PTYs) if you are in graphics mode. VTs and PTYs are implemented
+as tty drivers and live in drivers/tty/vt/vt.c and drivers/tty/pty.c, respectively.
+
+- The tty driver used over conventional UARTs resides in drivers/tty/serial/serial_core.c.
+
+- The USB-serial tty driver is in drivers/usb/serial/usb-serial.c.
+
+
+
+
+Line Disciplines
+----------------
+
+- Line disciplines provide an elegant mechanism that lets you use the same serial driver to run different
+technologies. The low-level physical driver and the tty driver handle the transfer of data to and from the
+hardware, while line disciplines are responsible for processing the data and transferring it between kernel space
+and user space.
+
+- The serial subsystem supports 17 standard line disciplines.
+
+- The default line discipline that gets attached when
+you open a serial port is N_TTY, which implements terminal I/O processing.
+- N_TTY is responsible for "cooking" characters received from the keyboard.
+- Depending on user request, it maps the control character to newline,
+converts lowercase to uppercase, expands tabs, and echoes characters to the associated VT.
+- N_TTY also supports a raw mode used by editors, which leaves all the preceding processing
+to user applications.
+
+- Line disciplines also implement network interfaces over serial transport protocols. For example, line disciplines
+that are part of the Point-to-Point Protocol (N_PPP) and the Serial Line Internet Protocol (N_SLIP) subsystems,
+frame packets, allocate and populate associated networking data structures, and pass the data on to the
+corresponding network protocol stack.
+
+- Other line disciplines handle Infrared Data (N_IRDA) and the Bluetooth
+Host Control Interface (N_HCI).
+
+- struct tty_ldisc
+"""
+struct tty_ldisc {
+	struct tty_ldisc_ops *ops;
+	struct tty_struct *tty;
+};
+
+struct tty_ldisc_ops {
+	int	magic;
+	char	*name;
+	int	num;
+	int	flags;
+
+	/*
+	 * The following routines are called from above.
+	 */
+	int	(*open)(struct tty_struct *);
+	void	(*close)(struct tty_struct *);
+	void	(*flush_buffer)(struct tty_struct *tty);
+	ssize_t	(*read)(struct tty_struct *tty, struct file *file,
+			unsigned char __user *buf, size_t nr);
+	ssize_t	(*write)(struct tty_struct *tty, struct file *file,
+			 const unsigned char *buf, size_t nr);
+	int	(*ioctl)(struct tty_struct *tty, struct file *file,
+			 unsigned int cmd, unsigned long arg);
+  ...
+  ...
+"""
+
+- Line disciplines active on your system can be found in /proc/tty/ldiscs.
+
+- Line disciplines gather data from their half of the tty flip buffer, process it, and copy the resulting data to a local
+read buffer.
+
+
+
+
+
+Summary of data structures related to serial drivers
+
+Data Structure      Location                            Description
+uart_driver         include/linux/serial_core.h         Representation of a low-levelUART driver.
+uart_port           include/linux/serial_core.h         Representation of a UART port.
+uart_ops            include/linux/serial_core.h         Entry points supported by UART drivers.
+platform_device     include/linux/platform_device.h     Representation of a platform device.
+platform_driver     include/linux/platform_device.h     Representation of a platform driver.
+tty_struct          include/linux/tty.h                 State information about a tty.
+tty_bufhead,
+tty_buffer          include/linux/tty.h                 These two structures implement the flip buffer associated with a tty.
+tty_driver          include/linux/tty_driver.h          Programming interface between tty drivers and higher layers.
+tty_ldisc           include/linux/tty_ldisc.h           Entry points supported by a line discipline.
+
+
+
+- Look at drivers/serial/imx.c for a real-world, low-level UART driver. It handles UARTs that are part of Freescale's
+i.MX series of embedded controllers.
+
+- To get a feel of networking line
+disciplines, look at the corresponding source files for PPP (drivers/net/ppp_async.c), Bluetooth
+(drivers/bluetooth/hci_ldisc.c), Infrared (drivers/net/irda/irtty-sir.c), and SLIP (drivers/net/slip.c).

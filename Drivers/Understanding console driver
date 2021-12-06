@@ -1,0 +1,476 @@
+drivers/tty/serial/msm_serial.c
+
+Globals:
+
+from include/linux/console.h
+
+#define CON_ENABLED	(4)
+
+struct console {
+	char	name[16];
+	void	(*write)(struct console *, const char *, unsigned);
+	int	(*read)(struct console *, char *, unsigned);
+	struct tty_driver *(*device)(struct console *, int *);
+	void	(*unblank)(void);
+	int	(*setup)(struct console *, char *);
+	int	(*exit)(struct console *);
+	int	(*match)(struct console *, char *name, int idx, char *options);
+	short	flags;
+	short	index;
+	int	cflag;
+	void	*data;
+	struct	 console *next;
+};
+
+enum con_flush_mode {
+	CONSOLE_FLUSH_PENDING,
+	CONSOLE_REPLAY_ALL,
+};
+
+extern void register_console(struct console *);
+extern int unregister_console(struct console *);
+extern struct console *console_drivers;
+extern void console_lock(void);
+extern int console_trylock(void);
+extern void console_unlock(void);
+...
+/* Suspend and resume console messages over PM events */
+extern void suspend_console(void);
+extern void resume_console(void);
+
+
+In file:
+//lots of register definitions.
+#define UART_MR1                        0x0000
+
+#define UART_MR1_AUTO_RFR_LEVEL0        0x3F
+#define UART_MR1_AUTO_RFR_LEVEL1        0x3FF00
+#define UART_DM_MR1_AUTO_RFR_LEVEL1     0xFFFFFF00
+...
+...
+#define UART_CSR                        0x0008
+
+#define UART_TF                         0x000C
+#define UARTDM_TF                       0x0070
+
+#define UART_CR                         0x0010
+#define UART_CR_CMD_NULL                (0 << 4)
+...
+...
+
+struct msm_dma {
+        struct dma_chan         *chan;
+        enum dma_data_direction dir;
+        dma_addr_t              phys;
+        unsigned char           *virt;
+        dma_cookie_t            cookie;
+        u32                     enable_bit;
+        unsigned int            count;
+        struct dma_async_tx_descriptor  *desc;
+};
+
+struct msm_port {
+        struct uart_port        uart;
+        char                    name[16];
+        struct clk              *clk;
+        struct clk              *pclk;
+        unsigned int            imr;
+        int                     is_uartdm;
+        unsigned int            old_snap_state;
+        bool                    break_detected;
+        struct msm_dma          tx_dma;
+        struct msm_dma          rx_dma;
+};
+
+#define UART_TO_MSM(uart_port)  container_of(uart_port, struct msm_port, uart)
+
+
+static struct msm_port msm_uart_ports[] = {
+        {
+                .uart = {
+                        .iotype = UPIO_MEM,
+                        .ops = &msm_uart_pops,
+                        .flags = UPF_BOOT_AUTOCONF,
+                        .fifosize = 64,
+                        .line = 0,
+                },
+        },
+        {
+                .uart = {
+                        .iotype = UPIO_MEM,
+                        .ops = &msm_uart_pops,
+                        .flags = UPF_BOOT_AUTOCONF,
+                        .fifosize = 64,
+                        .line = 1,
+                },
+        },
+        {
+                .uart = {
+                        .iotype = UPIO_MEM,
+                        .ops = &msm_uart_pops,
+                        .flags = UPF_BOOT_AUTOCONF,
+                        .fifosize = 64,
+                        .line = 2,
+                },
+        },
+};
+
+
+#define UART_NR ARRAY_SIZE(msm_uart_ports)
+
+Init
+----
+
+static struct uart_driver msm_uart_driver = {
+        .owner = THIS_MODULE,
+        .driver_name = "msm_serial",
+        .dev_name = "ttyMSM",
+        .nr = UART_NR,
+        .cons = MSM_CONSOLE,
+};
+
+static const struct dev_pm_ops msm_serial_dev_pm_ops = {
+        SET_SYSTEM_SLEEP_PM_OPS(msm_serial_suspend, msm_serial_resume)
+};
+
+static const struct of_device_id msm_match_table[] = {
+        { .compatible = "qcom,msm-uart" },
+        { .compatible = "qcom,msm-uartdm" },
+        {}
+};
+MODULE_DEVICE_TABLE(of, msm_match_table);
+
+static struct platform_driver msm_platform_driver = {
+        .remove = msm_serial_remove,
+        .probe = msm_serial_probe,
+        .driver = {
+                .name = "msm_serial",
+                .pm = &msm_serial_dev_pm_ops,
+                .of_match_table = msm_match_table,
+        },
+};
+
+static int __init msm_serial_init(void)
+{
+...
+        ret = uart_register_driver(&msm_uart_driver);
+...
+        ret = platform_driver_register(&msm_platform_driver);
+...
+        pr_info("msm_serial: driver initialized\n");
+        return ret;
+}
+
+
+Probe
+------
+
+
+Globals:
+static atomic_t msm_uart_next_id = ATOMIC_INIT(0);
+
+static const struct of_device_id msm_uartdm_table[] = {
+        { .compatible = "qcom,msm-uartdm-v1.1", .data = (void *)UARTDM_1P1 },
+        { .compatible = "qcom,msm-uartdm-v1.2", .data = (void *)UARTDM_1P2 },
+        { .compatible = "qcom,msm-uartdm-v1.3", .data = (void *)UARTDM_1P3 },
+        { .compatible = "qcom,msm-uartdm-v1.4", .data = (void *)UARTDM_1P4 },
+        { }
+};
+
+
+Probe:
+static int msm_serial_probe(struct platform_device *pdev){
+
+
+...
+    if (pdev->dev.of_node)
+            line = of_alias_get_id(pdev->dev.of_node, "serial");
+    else
+            line = pdev->id;
+
+    if (line < 0)
+            line = atomic_inc_return(&msm_uart_next_id) - 1;
+
+    if (unlikely(line < 0 || line >= UART_NR))
+            return -ENXIO;
+
+    //print("msm_serial: detected port #%d\n")
+
+    struct uart_port port = msm_get_port_from_line(line);
+    port->dev = &pdev->dev;
+    struct msm_prt msm_port = UART_TO_MSM(port);
+
+    // check whether device is of uartdm type
+    id = of_match_device(msm_uartdm_table, &pdev->dev);
+
+    if (id)
+            msm_port->is_uartdm = (unsigned long)id->data;
+    else
+            msm_port->is_uartdm = 0;
+
+    //get clock producer
+    msm_port->clk = devm_clk_get(&pdev->dev, "core");
+    if (IS_ERR(msm_port->clk))
+            return PTR_ERR(msm_port->clk);
+
+    //get clock producer if uartdm type
+    if (msm_port->is_uartdm) {
+        msm_port->pclk = devm_clk_get(&pdev->dev, "iface");
+        if (IS_ERR(msm_port->pclk))
+                return PTR_ERR(msm_port->pclk);
+    }
+
+    port->uartclk = clk_get_rate(msm_port->clk);
+    //print uartclk=port->uartclk;
+
+    //get memory resource from platform data
+    resource = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+    if (unlikely(!resource))
+            return -ENXIO;
+    port->mapbase = resource->start;
+
+    //get irq from platform data
+    irq = platform_get_irq(pdev, 0);
+    if (unlikely(irq < 0))
+            return -ENXIO;
+    port->irq = irq;
+    port->has_sysrq = IS_ENABLED(CONFIG_SERIAL_MSM_CONSOLE);
+
+    //pass the struct uart_port data populated here to other functions through platform driver data
+    platform_set_drvdata(pdev, port);
+
+    //add uart port
+    return uart_add_one_port(&msm_uart_driver, port);
+}
+
+
+
+Console
+--------
+
+
+#ifdef CONFIG_SERIAL_MSM_CONSOLE
+
+static struct console msm_console = {
+        .name = "ttyMSM",
+        .write = msm_console_write,
+        .device = uart_console_device,
+        .setup = msm_console_setup,
+        .flags = CON_PRINTBUFFER,
+        .index = -1,
+        .data = &msm_uart_driver,
+};
+
+#define MSM_CONSOLE     (&msm_console)
+
+
+console setup()
+
+static int msm_console_setup(struct console *co, char *options)
+{
+    struct uart_port *port;
+    int baud = 115200;
+    int bits = 8;
+    int parity = 'n';
+    int flow = 'n';
+
+    //check co->index is valide. co->index=line
+    if (unlikely(co->index >= UART_NR || co->index < 0))
+            return -ENXIO;
+
+    //get struct uart_port from console index
+    port = msm_get_port_from_line(co->index);
+
+    if (unlikely(!port->membase))
+            return -ENXIO;
+
+    //initialize clock and setup MND registers
+    msm_init_clock(port);
+
+    //parse the options string for baud,parity etc.
+    if (options)
+            uart_parse_options(options, &baud, &parity, &bits, &flow);
+
+    //print "msm_serial: console setup on port port->line"
+
+    //setup the serial console parameters
+    return uart_set_options(port, co, baud, parity, bits, flow);
+}
+
+
+
+msm_get_port_from_line()
+
+static inline struct uart_port *msm_get_port_from_line(unsigned int line)
+{
+        return &msm_uart_ports[line].uart;
+}
+
+
+msm_init_clock()
+
+static void msm_init_clock(struct uart_port *port)
+{
+        //get msm_port struct from struct uart_port
+        struct msm_port *msm_port = UART_TO_MSM(port);
+
+        //prepare and enable the core clocks
+        clk_prepare_enable(msm_port->clk);
+        clk_prepare_enable(msm_port->pclk);
+
+        //setup MND registers
+        msm_serial_set_mnd_regs(port);
+}
+
+msm_serial_set_mnd_regs()
+
+static void msm_serial_set_mnd_regs(struct uart_port *port)
+{
+        struct msm_port *msm_port = UART_TO_MSM(port);
+
+        /*
+         * These registers don't exist so we change the clk input rate
+         * on uartdm hardware instead
+         */
+        if (msm_port->is_uartdm)
+                return;
+
+        if (port->uartclk == 19200000)
+                msm_serial_set_mnd_regs_tcxo(port);
+        else if (port->uartclk == 4800000)
+                msm_serial_set_mnd_regs_tcxoby4(port);
+}
+
+/*
+ * Setup the MND registers to use the TCXO clock.
+ */
+static void msm_serial_set_mnd_regs_tcxo(struct uart_port *port)
+{
+        msm_write(port, 0x06, UART_MREG);
+        msm_write(port, 0xF1, UART_NREG);
+        msm_write(port, 0x0F, UART_DREG);
+        msm_write(port, 0x1A, UART_MNDREG);
+        port->uartclk = 1843200;
+}
+
+/*
+ * Setup the MND registers to use the TCXO clock divided by 4.
+ */
+static void msm_serial_set_mnd_regs_tcxoby4(struct uart_port *port)
+{
+        msm_write(port, 0x18, UART_MREG);
+        msm_write(port, 0xF6, UART_NREG);
+        msm_write(port, 0x0F, UART_DREG);
+        msm_write(port, 0x0A, UART_MNDREG);
+        port->uartclk = 1843200;
+}
+
+
+static
+void msm_write(struct uart_port *port, unsigned int val, unsigned int off)
+{
+        writel_relaxed(val, port->membase + off);
+}
+
+
+
+console_write()
+
+
+static void msm_console_write(struct console *co, const char *s,
+                              unsigned int count)
+{
+        struct uart_port *port;
+        struct msm_port *msm_port;
+
+        //panic if co->index is invalid. This condition should never occur
+        BUG_ON(co->index < 0 || co->index >= UART_NR);
+
+        //get struct uart_port
+        port = msm_get_port_from_line(co->index);
+        msm_port = UART_TO_MSM(port);
+
+        __msm_console_write(port, s, count, msm_port->is_uartdm);
+}
+
+__msm_console_write()
+
+static void __msm_console_write(struct uart_port *port, const char *s,
+                                unsigned int count, bool is_uartdm)
+{
+    int i;
+    int num_newlines = 0;
+    bool replaced = false;
+    void __iomem *tf;
+    int locked = 1;
+
+    //set iomem region
+    if (is_uartdm)
+            tf = port->membase + UARTDM_TF;
+    else
+            tf = port->membase + UART_TF;
+
+    //Count the number of new lines
+    /* Account for newlines that will get a carriage return added */
+    for (i = 0; i < count; i++)
+            if (s[i] == '\n')
+                    num_newlines++;
+
+    //Increment the count by number of newlines to add carriage returns
+    count += num_newlines;
+
+    //Lock the port
+    if (port->sysrq)
+            locked = 0;
+    else if (oops_in_progress)
+            locked = spin_trylock(&port->lock);
+    else
+            spin_lock(&port->lock);
+
+    //for uartdm
+    if (is_uartdm)
+            msm_reset_dm_count(port, count);
+
+    //Now lock is acquired, start writing each character to the console
+    i=0;
+    while (i < count) {
+            int j;
+            unsigned int num_chars;
+            char buf[4] = { 0 };
+
+            //for uartdm write min of (number left to write,4) characters
+            if (is_uartdm)
+                    num_chars = min(count - i, (unsigned int)sizeof(buf));
+            else
+                    num_chars = 1;
+
+            for (j = 0; j < num_chars; j++) {
+                    char c = *s;
+
+                    if (c == '\n' && !replaced) {
+                            buf[j] = '\r';
+                            j++;
+                            replaced = true;
+                    }// \r\n instead of \n
+                    if (j < num_chars) {
+                            buf[j] = c;
+                            s++;
+                            replaced = false;
+                    }
+            }
+
+            //wait till uart is ready for transmission
+            while (!(msm_read(port, UART_SR) & UART_SR_TX_READY))
+                    cpu_relax();
+
+            //write contents of buffer to io memory area aka console
+            iowrite32_rep(tf, buf, 1);
+
+            //increment i by number  of characters written to console
+            i += num_chars;
+    }
+
+    //writing is completed, release the lock
+    if (locked)
+            spin_unlock(&port->lock);
+}

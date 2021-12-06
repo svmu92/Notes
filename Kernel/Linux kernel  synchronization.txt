@@ -1,0 +1,1256 @@
+- Multiprocessing support
+implies that kernel code can simultaneously run on two or more processors. Conse-
+quently, without protection, code in the kernel, running on two different processors, can
+simultaneously access shared data at exactly the same time.
+
+- With the introduction of the
+2.6 kernel, the Linux kernel is preemptive.This implies that (again, in the absence of pro-
+tection) the scheduler can preempt kernel code at virtually any point and reschedule
+another task.
+
+
+- Code paths that access and manipulate shared data are called critical regions (also called
+critical sections). It is usually unsafe for multiple threads of execution to access the same
+resource simultaneously.To prevent concurrent access during critical regions, the pro-
+grammer must ensure that code executes atomically—that is, operations complete without
+interruption as if the entire critical region were one indivisible instruction.
+
+- Ensuring that unsafe concurrency is prevented and that race conditions do not
+occur is called synchronization.
+
+
+lock - a mechanism for preventing access to a resource while
+another thread of execution is in the marked region.
+
+- locks are advisory and voluntary. Locks are entirely a programming con-
+struct that the programmer must take advantage of.
+
+- locks are implemented using atomic operations
+that ensure no race exists.
+
+- almost all processors implement
+an atomic test and set instruction that tests the value of an integer and sets it to a new
+value only if it is zero.A value of zero means unlocked.
+
+- On the popular x86 architecture,
+locks are implemented using such a similar instruction called compare and exchange.
+
+- type of concurrency—in
+which two things do not actually happen at the same time but interleave with each other
+such that they might as well—is called pseudo-concurrency.
+
+- If you have a symmetrical multiprocessing machine, two processes can actually be exe-
+cuted in a critical region at the exact same time.That is called true concurrency.
+
+
+- The kernel has similar causes of concurrency:
+  - Interrupts— An interrupt can occur asynchronously at almost any time, inter-
+    rupting the currently executing code.
+  - Softirqs and tasklets— The kernel can raise or schedule a softirq or tasklet at
+    almost any time, interrupting the currently executing code.
+  - Kernel preemption— Because the kernel is preemptive, one task in the kernel
+    can preempt another.
+  - Sleeping and synchronization with user-space— A task in the kernel can
+    sleep and thus invoke the scheduler, resulting in the running of a new process.
+  - Symmetrical multiprocessing— Two or more processors can execute kernel
+    code at exactly the same time.
+
+
+- Code that is safe from concurrent access from an interrupt handler is said to be
+interrupt-safe.
+
+- Code that is safe from concurrency on symmetrical multiprocessing
+machines is SMP-safe.
+
+- Code that is safe from concurrency with kernel preemption is
+preempt-safe.
+
+
+
+- Local automatic variables (and dynamically allocated data
+structures whose address is stored only on the stack) do not need any sort of locking
+because they exist solely on the stack of the executing thread.
+
+- Likewise, data that is
+accessed by only a specific task does not require locking (because a process can execute
+on only one processor at a time).
+
+
+- What does need locking?
+  - Most global kernel data structures do.
+  - data shared between process context and interrupt context
+  - data shared between two different interrupt handlers
+
+
+
+- A deadlock is a condition involving one or more threads of execution and one or more
+resources, such that each thread waits for one of the resources, but all the resources are
+already held.
+
+- The threads all wait for each other, but they never make any progress toward
+releasing the resources that they already hold.Therefore, none of the threads can con-
+tinue, which results in a deadlock.
+
+- Self-deadlock: If a thread of execution
+attempts to acquire a lock it already holds, it has to wait for the lock to be released. But
+it will never release the lock, because it is busy waiting for the lock, and the result is
+deadlock
+
+
+
+- Writing deadlock-free code:
+
+- Implement lock ordering. Nested locks must always be obtained in the same order.
+This prevents the deadly embrace deadlock. Document the lock ordering so others
+will follow it.
+- Prevent starvation.
+- Do not double acquire the same lock.
+- Design for simplicity. Complexity in your locking scheme invites deadlocks.
+
+
+
+- Whenever locks are nested within other locks, a specific ordering must be obeyed. It is
+good practice to place the ordering in a comment above the lock.
+
+- The order of unlock does not matter with respect to deadlock, although it is common
+practice to release the locks in an order inverse to that in which they were acquired.
+
+
+
+- The term lock contention, or simply contention, describes a lock currently in use but that
+another thread is trying to acquire.A lock that is highly contended often has threads waiting
+to acquire it. High contention can occur because a lock is frequently obtained, held for a
+long time after it is obtained, or both.
+
+- locks can slow down a system’s performance.A
+highly contended lock can become a bottleneck in the system, quickly limiting its per-
+formance.
+
+
+- Scalability is a measurement of how well a system can be expanded.
+
+- The granularity of locking is a description of the size or amount of data that a lock
+protects.A very coarse lock protects a large amount of data. On the other hand, a very fine-grained lock protects a small
+amount of data
+
+- Coarse locking of major resources can easily become
+a bottleneck on even small machines.There is a thin line between too-coarse locking and
+too-fine locking. Locking that is too coarse results in poor scalability if there is high lock
+contention, whereas locking that is too fine results in wasteful overhead if there is little
+lock contention. Both scenarios equate to poor performance. Start simple and grow in com-
+plexity only as needed. Simplicity is key.
+
+
+
+Kernel Synchronization Methods
+------------------------------
+
+
+Atomic operations
+-----------------
+- The kernel provides two sets of interfaces for atomic operations—one that operates on
+integers and another that operates on individual bits.These interfaces are implemented on
+every architecture that Linux supports. Most architectures contain instructions that pro-
+vide atomic versions of simple arithmetic operations. Other architectures, lacking direct
+atomic operations, provide an operation to lock the memory bus for a single operation,
+thus guaranteeing that another memory-affecting operation cannot occur simultaneously.
+
+
+- The atomic integer methods operate on a special data type, atomic_t .
+- First, having the atomic functions accept only the atomic_t type ensures that the
+atomic operations are used only with these special types.
+- It also ensures that the data types are not passed to any nonatomic functions.
+- The use of atomic_t
+ensures the compiler does not (erroneously but cleverly) optimize access to the value—it
+is important the atomic operations receive the correct memory address and not an alias.
+- Finally, use of atomic_t can hide any architecture-specific differences in its implementa-
+tion.
+
+- The atomic_t type is defined in <linux/types.h> :
+"""
+typedef struct {
+    volatile int counter;
+} atomic_t;
+"""
+- The declarations needed to use the atomic integer operations are in <asm/atomic.h> .
+
+- Defining an atomic_t is done in the usual manner. Optionally, you can set it to an ini-
+tial value:
+"""
+atomic_t v;                   /* define v */
+atomic_t u = ATOMIC_INIT(0);  /* define u and initialize it to zero */
+"""
+
+- Operations are all simple:
+"""
+atomic_set(&v, 4);    /* v = 4 (atomically) */
+atomic_add(2, &v);    /* v = v + 2 = 6 (atomically) */
+atomic_inc(&v);       /* v = v + 1 = 7 (atomically) */
+"""
+
+- If you ever need to convert an atomic_t to an int , use "atomic_read()"
+
+- A common use of the atomic integer operations is to implement counters. Protecting
+a sole counter with a complex locking scheme is overkill, so instead developers use
+atomic_inc() and atomic_dec() , which are much lighter in weight.
+
+- Another use of the atomic integer operators is atomically performing an operation and
+testing the result.A common example is the atomic decrement and test:
+"""
+int atomic_dec_and_test(atomic_t *v)
+"""
+- This function decrements by one the given atomic value. If the result is zero, it returns
+true; otherwise, it returns false.
+
+
+
+Atomic Integer Methods
+======================
+Atomic Integer Operation                      Description
+-------------------------                     ------------------
+ATOMIC_INIT(int i)                            At declaration, initialize to i.
+int atomic_read(atomic_t *v)                  Atomically read the integer value of v.
+void atomic_set(atomic_t *v, int i)           Atomically set v equal to i.
+void atomic_add(int i, atomic_t *v)           Atomically add i to v.
+void atomic_sub(int i, atomic_t *v)           Atomically subtract i from v.
+void atomic_inc(atomic_t *v)                  Atomically add one to v.
+void atomic_dec(atomic_t *v)                  Atomically subtract one from v.
+int atomic_sub_and_test(int i, atomic_t *v)   Atomically subtract i from v and return true if the result is zero; otherwise false.
+int atomic_add_negative(int i, atomic_t *v)   Atomically add i to v and return true if the result is negative; otherwise false.
+int atomic_add_return(int i, atomic_t *v)     Atomically add i to v and return the result.
+int atomic_sub_return(int i, atomic_t *v)     Atomically subtract i from v and return the result.
+int atomic_inc_return(int i, atomic_t *v)     Atomically increment v by one and return the result.
+int atomic_dec_return(int i, atomic_t *v)     Atomically decrement v by one and return the result.
+int atomic_dec_and_test(atomic_t *v)          Atomically decrement v by one and return true if zero; false otherwise.
+int atomic_inc_and_test(atomic_t *v)          Atomically increment v by one and return true if the result is zero; false otherwise.
+
+
+- atomic_read() is usually just a
+macro returning the integer value of the atomic_t
+
+x86:
+"""
+/**
+ * atomic_read - read atomic variable
+ * @v: pointer of type atomic_t
+ *
+ * Atomically reads the value of @v.
+ */
+static inline int atomic_read(const atomic_t *v)
+{
+	return READ_ONCE((v)->counter);
+}
+"""
+
+- Atomicity ensures that instructions occur without interruption and that they
+complete either in their entirety or not at all.
+
+- Ordering, on the other hand, ensures that the
+desired, relative ordering of two or more instructions—even if they are to occur in separate
+threads of execution or even separate processors—is preserved.
+- Ordering is enforced via barrier operations
+
+
+- 64-bit variant ==> atomic64_t
+- or
+portability, the size of atomic_t cannot change between architectures, so atomic_t is 32-
+bit even on 64-bit architectures. Instead, the atomic64_t type provides a 64-bit atomic
+integer that functions otherwise identical to its 32-bit brother.
+"""
+#ifdef CONFIG_64BIT
+typedef struct {
+	s64 counter;
+} atomic64_t;
+#endif
+"""
+
+Atomic Integer Methods
+======================
+Atomic Integer Operation                        Description
+---------------------------                     -------------------------
+ATOMIC64_INIT(long i)                           At declaration, initialize to i.
+long atomic64_read(atomic64_t *v)               Atomically read the integer value of v.
+void atomic64_set(atomic64_t *v, int i)         Atomically set v equal to i.
+void atomic64_add(int i, atomic64_t *v)         Atomically add i to v.
+void atomic64_sub(int i, atomic64_t *v)         Atomically subtract i from v.
+void atomic64_inc(atomic64_t *v)                Atomically add one to v.
+void atomic64_dec(atomic64_t *v)                Atomically subtract one from v.
+int atomic64_sub_and_test(int i, atomic64_t *v) Atomically subtract i from v and return true if the result is zero; otherwise false.
+int atomic64_add_negative(int i, atomic64_t *v) Atomically add i to v and return true if the result is negative; otherwise false.
+long atomic64_add_return(int i, atomic64_t *v)  Atomically add i to v and return the result.
+long atomic64_sub_return(int i, atomic64_t *v)  Atomically subtract i from v and return the result.
+long atomic64_inc_return(int i, atomic64_t *v)  Atomically increment v by one and return the result.
+long atomic64_dec_return(int i, atomic64_t *v)  Atomically decrement v by one and return the result.
+int atomic64_dec_and_test(atomic64_t *v)        Atomically decrement v by one and return true if zero; false otherwise.
+int atomic64_inc_and_test(atomic64_t *v)        Atomically increment v by one and return true if the result is zero; false otherwise.
+
+
+- For portability between all Linux’s supported architectures, develop-
+ers should use the 32-bit atomic_t type.The 64-bit atomic64_t is reserved for code that
+is both architecture-specific and that requires 64-bits.
+
+
+
+Atomic Bitwise operations
+-------------------------
+- In addition to atomic integer operations, the kernel also provides a family of functions
+that operate at the bit level. Not surprisingly, they are architecture-specific and defined in
+<asm/bitops.h>
+
+- The arguments are a pointer and a bit number. Bit zero is the least significant bit
+of the given address. On 32-bit machines, bit 31 is the most significant bit, and bit 32 is
+the least significant bit of the following word.
+
+- Because the functions operate on a generic pointer, there is no equivalent of the
+atomic integer’s "atomic_t" type. Instead, you can work with a pointer to whatever data
+you want.
+
+
+Understanding:
+- To use atomict bit operations, you don't need a specific datatype. Any datatype can
+be used, unlike atomic integer methods which require "atomic_t" type.
+
+
+Atomic Bitwise Operation                      Description
+----------------------------------            --------------------
+void set_bit(int nr, void *addr)              Atomically set the nr -th bit starting from addr.
+void clear_bit(int nr, void *addr)            Atomically clear the nr -th bit starting from addr.
+void change_bit(int nr, void *addr)           Atomically flip the value of the nr -th bit starting from addr.
+int test_and_set_bit(int nr, void *addr)      Atomically set the nr -th bit starting from addr and return the previous value.
+int test_and_clear_bit(int nr, void *addr)    Atomically clear the nr -th bit starting from addr and return the previous value.
+int test_and_change_bit(int nr, void *addr)   Atomically flip the nr -th bit starting from addr and return the previous value.
+int test_bit(int nr, void *addr)              Atomically return the value of the nr-th bit starting from addr.
+
+
+(Deprecated)
+- Conveniently, nonatomic versions of all the bitwise functions are also provided.They
+behave identically to their atomic siblings, except they do not guarantee atomicity, and
+their names are prefixed with double underscores. For example, the nonatomic form of
+test_bit() is __test_bit() . If you do not require atomicity (say, for example, because a
+lock already protects your data), these variants of the bitwise functions might be faster.
+
+
+- The kernel also provides routines to find the first set (or unset) bit starting at a given
+address:
+"""
+int find_first_bit(unsigned long *addr, unsigned int size)
+int find_first_zero_bit(unsigned long *addr, unsigned int size)
+"""
+- Both functions take a pointer as their first argument and the number of bits in total to
+search as their second.They return the bit number of the first set or first unset bit, respec-
+tively.
+
+
+
+
+Spinlocks
+=========
+- The most common lock in the Linux kernel is the spin lock.
+- A spin lock is a lock that
+can be held by at most one thread of execution.
+- If a thread of execution attempts to ac-
+quire a spin lock while it is already held, which is called contended, the thread busy loops—
+spins—waiting for the lock to become available.
+- If the lock is not contended, the thread
+can immediately acquire the lock and continue.
+- The spinning prevents more than one
+thread of execution from entering the critical region at any one time.
+- This is the nature of the
+spin lock: a lightweight single-holder lock that should be held for short durations.
+
+
+- Spin locks are architecture-dependent and implemented in assembly.The architecture-
+dependent code is defined in <asm/spinlock.h> .The actual usable interfaces are defined
+in <linux/spinlock.h> .
+"""
+DEFINE_SPINLOCK(mr_lock);
+spin_lock(&mr_lock);
+/* critical region ... */
+spin_unlock(&mr_lock);
+"""
+
+- On uniprocessor ma-
+chines, the locks compile away and do not exist; they simply act as markers to disable and
+enable kernel preemption. If kernel preempt is turned off, the locks compile away entirely.
+- Linux kernel’s spin locks are not recursive. This means that if you attempt to acquire a lock
+you already hold, you will spin, waiting for yourself to release the lock. But because you are
+busy spinning, you will never release the lock and you will deadlock.
+
+"""
+static inline void __raw_spin_lock(raw_spinlock_t *lock)
+{
+	preempt_disable();
+	spin_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+	LOCK_CONTENDED(lock, do_raw_spin_trylock, do_raw_spin_lock);
+}
+
+
+static inline void __raw_spin_unlock(raw_spinlock_t *lock)
+{
+	spin_release(&lock->dep_map, 1, _RET_IP_);
+	do_raw_spin_unlock(lock);
+	preempt_enable();
+}
+"""
+
+"""
+#define spin_acquire(l, s, t, i)		lock_acquire_exclusive(l, s, t, NULL, i)
+
+#define lock_acquire_exclusive(l, s, t, n, i)		lock_acquire(l, s, t, 0, 1, n, i)
+
+
+lock_acquire() ---> __lock_acquire()
+"""
+
+- Spin locks can be used in interrupt handlers, whereas semaphores cannot be used be-
+cause they sleep.
+
+- If a lock is used in an interrupt handler, you must also disable local inter-
+rupts (interrupt requests on the current processor) before obtaining the lock. Otherwise, it
+is possible for an interrupt handler to interrupt kernel code while the lock is held and at-
+tempt to reacquire the lock.The interrupt handler spins, waiting for the lock to become
+available.The lock holder, however, does not run until the interrupt handler completes.
+This is an example of the "double-acquire deadlock".
+
+- The kernel provides an interface that conveniently disables interrupts and acquires the
+lock. Usage is:
+"""
+DEFINE_SPINLOCK(mr_lock);
+unsigned long flags;
+
+spin_lock_irqsave(&mr_lock, flags);
+/* critical region ... */
+spin_unlock_irqrestore(&mr_lock, flags);
+"""
+
+- The routine spin_lock_irqsave() saves the current state of interrupts, disables them
+locally, and then obtains the given lock.
+- Conversely, spin_unlock_irqrestore() unlocks
+the given lock and returns interrupts to their previous state.
+
+
+BIG FAT RULE: Lock data, not code.
+
+- If you always know before the fact that interrupts are initially enabled, there is no need
+to restore their previous state.You can unconditionally enable them on unlock. In those
+cases, spin_lock_irq() and spin_unlock_irq() are optimal:
+"""
+DEFINE_SPINLOCK(mr_lock);
+spin_lock_irq(&mr_lock);
+/* critical section ... */
+spin_unlock_irq(&mr_lock);
+"""
+
+"""
+#define raw_spin_lock_irq(lock)		_raw_spin_lock_irq(lock)
+
+#ifdef CONFIG_INLINE_SPIN_LOCK_IRQ
+#define _raw_spin_lock_irq(lock) __raw_spin_lock_irq(lock)
+#endif
+
+static inline void __raw_spin_lock_irq(raw_spinlock_t *lock)
+{
+	local_irq_disable();
+	preempt_disable();
+	spin_acquire(&lock->dep_map, 0, 0, _RET_IP_);
+	LOCK_CONTENDED(lock, do_raw_spin_trylock, do_raw_spin_lock);
+}
+
+
+static inline void do_raw_spin_lock(raw_spinlock_t *lock) __acquires(lock)
+{
+	__acquire(lock);
+	arch_spin_lock(&lock->raw_lock);
+	mmiowb_spin_lock();
+}
+
+
+static inline int do_raw_spin_trylock(raw_spinlock_t *lock)
+{
+	int ret = arch_spin_trylock(&(lock)->raw_lock);
+
+	if (ret)
+		mmiowb_spin_lock();
+
+	return ret;
+}
+"""
+
+- The main point of the lock_acquire function is to disable hardware interrupts by the call of the raw_local_irq_save() macro,
+because the given spinlock might be acquired with enabled hardware interrupts. In this way the process will not be preempted.
+
+The LOCK_CONTENDED macro is defined in the include/linux/lockdep.h header file and just calls the given function with the given spinlock:
+"""
+#define LOCK_CONTENDED(_lock, try, lock) \
+         lock(_lock)
+"""
+- In our case, the lock is do_raw_spin_lock() function from the include/linux/spinlock.h header file and
+the _lock is the given raw_spinlock_t:
+"""
+static inline void do_raw_spin_lock(raw_spinlock_t *lock) __acquires(lock)
+{
+        __acquire(lock);
+         arch_spin_lock(&lock->raw_lock);
+}
+"""
+- The __acquire here is just Sparse related macro
+
+
+- Debugging Spin Locks
+The configure option CONFIG_DEBUG_SPINLOCK enables a handful of debugging checks in
+the spin lock code. For example, with this option the spin lock code checks for the use of
+uninitialized spin locks and unlocking a lock that is not yet locked. When testing your code,
+you should always run with spin lock debugging enabled. For additional debugging of lock
+lifecycles, enable CONFIG_DEBUG_LOCK_ALLOC .
+
+
+Other spin lock Methods
+----------------------
+
+- The method spin_lock_init() to initialize a dynamically created spin lock
+(a spinlock_t that you do not have a direct reference to, just a pointer).
+
+- The method spin_trylock() attempts to obtain the given spin lock. If the lock is
+contended, rather than spin and wait for the lock to be released, the function immediately
+returns zero. If it succeeds in obtaining the lock, it returns nonzero.
+
+- spin_is_locked() returns nonzero if the given lock is currently acquired. Otherwise, it
+returns zero. In neither case does spin_is_locked() actually obtain the lock.
+
+
+Spin Lock Methods
+=-----------------=
+Method                      Description
+spin_lock()                 Acquires given lock
+spin_lock_irq()             Disables local interrupts and acquires given lock
+spin_lock_irqsave()         Saves current state of local interrupts, disables local interrupts, and acquires given lock
+spin_unlock()               Releases given lock
+spin_unlock_irq()           Releases given lock and enables local interrupts
+spin_unlock_irqrestore()    Releases given lock and restores local interrupts to given previous state
+spin_lock_init()            Dynamically initializes given spinlock_t
+spin_trylock()              Tries to acquire given lock; if unavailable, returns nonzero
+spin_is_locked()            Returns nonzero if the given lock is currently acquired, otherwise it returns zero
+
+
+Spinlocks and Bottom halves
+-----------------------------
+- The function spin_lock_bh()
+obtains the given lock and disables all bottom halves.The function spin_unlock_bh()
+performs the inverse.
+
+- Because a bottom half might preempt process context code, if data is shared between a
+bottom-half process context, you must protect the data in process context with both a
+lock and the disabling of bottom halves.
+- Likewise, because an interrupt handler might
+preempt a bottom half, if data is shared between an interrupt handler and a bottom half,
+you must both obtain the appropriate lock and disable interrupts.
+
+- Two tasklets of the same type do not ever run simultaneously.Thus, there is
+no need to protect data used only within a single type of tasklet.If the data is shared be-
+tween two different tasklets, however, you must obtain a normal spin lock before access-
+ing the data in the bottom half.You do not need to disable bottom halves because a
+tasklet never preempts another running tasklet on the same processor.
+
+- With softirqs, regardless of whether it is the same softirq type, if data is shared by
+softirqs, it must be protected with a lock. Recall that softirqs, even two of the same type,
+might run simultaneously on multiple processors in the system. A softirq never preempts
+another softirq running on the same processor, however, so disabling bottom halves is
+not needed.
+
+
+
+Reader-Writer Spinlocks
+-----------------------
+- Writing demands mutual exclusion. On the other hand, when the list is searched (read
+from), it is only important that nothing else writes to the list.
+- Multiple concurrent readers are safe so long as there are no writers.
+
+- Reader-writer spin
+locks provide separate reader and writer variants of the lock.
+- One or more readers can concurrently hold the reader lock.
+- The writer lock, conversely, can be held by at most one writer with no concurrent readers.
+
+- Reader/writer locks are sometimes called
+shared/exclusive or concurrent/exclusive locks because the lock is available in a shared (for
+readers) and an exclusive (for writers) form.
+
+
+Usage is similar to spin locks.The reader-writer spin lock is initialized via:
+"""
+DEFINE_RWLOCK(mr_rwlock);
+"""
+
+Then, in the reader code path:
+"""
+read_lock(&mr_rwlock);
+  /* critical section (read only) ... */
+read_unlock(&mr_rwlock);
+"""
+
+Finally, in the writer code path:
+"""
+write_lock(&mr_rwlock);
+/* critical section (read and write) ... */
+write_unlock(&mr_rwlock);
+"""
+
+- It is safe for multiple readers to obtain the same lock. In fact, it is safe for the same
+thread to recursively obtain the same read lock.
+
+
+Reader-Writer Spin Lock Methods
+=------------------------------=
+Method                        Description
+read_lock()                   Acquires given lock for reading
+read_lock_irq()               Disables local interrupts and acquires given lock for reading
+read_lock_irqsave()           Saves the current state of local interrupts, disables local interrupts, and acquires the given lock for reading
+read_unlock()                 Releases given lock for reading
+read_unlock_irq()             Releases given lock and enables local interrupts
+read_unlock_ irqrestore()     Releases given lock and restores local interrupts to the given previous state
+write_lock()                  Acquires given lock for writing
+write_lock_irq()              Disables local interrupts and acquires the given lock for writing
+write_lock_irqsave()          Saves current state of local interrupts, disables local interrupts, and acquires the given lock for writing
+write_unlock()                Releases given lock
+write_unlock_irq()            Releases given lock and enables local interrupts
+write_unlock_irqrestore()     Releases given lock and restores local interrupts to given previous state
+write_trylock()               Tries to acquire given lock for writing; if unavailable, returns nonzero
+rwlock_init()                 Initializes given rwlock_t
+
+
+- If the read lock is held and a writer is waiting for exclusive ac-
+cess, readers that attempt to acquire the lock continue to succeed.The spinning writer
+does not acquire the lock until all readers release the lock.Therefore, a sufficient number
+of readers can starve pending writers.
+
+
+
+
+arch_spin_lock() implementation
+
+arm:
+"""
+static inline void arch_spin_lock(arch_spinlock_t *lock)
+{
+	unsigned long tmp;
+	u32 newval;
+	arch_spinlock_t lockval;
+
+	prefetchw(&lock->slock);
+	__asm__ __volatile__(
+"1:	ldrex	%0, [%3]\n"
+"	add	%1, %0, %4\n"
+"	strex	%2, %1, [%3]\n"
+"	teq	%2, #0\n"
+"	bne	1b"
+	: "=&r" (lockval), "=&r" (newval), "=&r" (tmp)
+	: "r" (&lock->slock), "I" (1 << TICKET_SHIFT)
+	: "cc");
+
+	while (lockval.tickets.next != lockval.tickets.owner) {
+		wfe();
+		lockval.tickets.owner = READ_ONCE(lock->tickets.owner);
+	}
+
+	smp_mb();
+}
+
+static inline void arch_spin_unlock(arch_spinlock_t *lock)
+{
+	smp_mb();
+	lock->tickets.owner++;
+	dsb_sev();
+}
+"""
+
+Semaphores
+===========
+- Semaphores in Linux are sleeping locks.
+- When a task attempts to acquire a semaphore
+that is unavailable, the semaphore places the task onto a wait queue and puts the task to
+sleep.The processor is then free to execute other code.When the semaphore becomes
+available, one of the tasks on the wait queue is awakened so that it can then acquire the
+semaphore.
+- This provides better processor utilization than spin locks because there is no time spent
+busy looping, but semaphores have much greater overhead than spin locks.
+
+
+Semaphores vs spinlocks
+------------------------
+- Because the contending tasks sleep while waiting for the lock to become available,
+semaphores are well suited to locks that are held for a long time.
+- Semaphores are not optimal for locks that are held for short periods be-
+cause the overhead of sleeping, maintaining the wait queue, and waking back up
+can easily outweigh the total lock hold time.
+- Because a thread of execution sleeps on lock contention, semaphores must be ob-
+tained only in process context because interrupt context is not schedulable.
+- You can sleep while holding a semaphore.
+- You cannot hold a spin lock while you acquire a semaphore, because you might
+have to sleep while waiting for the semaphore, and you cannot sleep while holding
+a spin lock.
+- Unlike spin locks, semaphores do not disable kernel preemption and, consequently, code
+holding a semaphore can be preempted.This means semaphores do not adversely affect
+scheduling latency.
+- They can allow for an arbitrary number of simultaneous lock holders.
+Whereas spin locks permit at most one task to hold the lock at a
+time, the number of permissible simultaneous holders of semaphores can be set at declara-
+tion time.This value is called the usage count or simply the count.
+
+count = 1 - binary semaphore
+count > 1 - counting semaphore
+
+- The down() method is used to acquire a semaphore by decrementing the count by
+one. If the new count is zero or greater, the lock is acquired and the task can enter the
+critical region. If the count is negative, the task is placed on a wait queue, and the proces-
+sor moves on to something else.
+- The up() method is used to release a semaphore upon completion of a critical
+region.This is called upping the semaphore.The method increments the count value; if the
+semaphore’s wait queue is not empty, one of the waiting tasks is awakened and allowed to
+acquire the semaphore.
+
+
+- The semaphore implementation is architecture-dependent and defined in
+<asm/semaphore.h> .The struct semaphore type represents semaphores.
+
+- Statically declared semaphores are created via the following, where name is the variable’s name and
+count is the usage count of the semaphore:
+"""
+struct semaphore name;
+sema_init(&name, count);
+"""
+
+- As a shortcut to create the more common mutex, use the following, where, again, name
+is the variable name of the binary semaphore:
+"""
+static DECLARE_MUTEX(name);
+"""
+
+- To initialize a dynamically created semaphore to which you have only an indi-
+rect pointer reference, just call sema_init() , where sem is a pointer and count is the us-
+age count of the semaphore:
+"""
+sema_init(sem, count);
+"""
+
+- Similarly, to initialize a dynamically created mutex, you can use
+"""
+init_MUTEX(sem);
+"""
+
+
+- The function "down_interruptible()"" attempts to acquire the given semaphore. If the
+semaphore is unavailable, it places the calling process to sleep in the TASK_INTERRUPTIBLE
+state.
+- If the task receives a signal while waiting
+for the semaphore, it is awakened and "down_interruptible()"" returns -EINTR .
+
+- Alternatively, the function "down()"" places the task in the TASK_UNINTERRUPTIBLE state when it
+sleeps.
+
+- You can use "down_trylock()"" to try to acquire the given semaphore without blocking.
+If the semaphore is already held, the function immediately returns nonzero. Otherwise, it
+returns zero and you successfully hold the lock.
+
+- To release a given semaphore, call "up()".
+
+"""
+/* define and declare a semaphore, named mr_sem, with a count of one */
+static DECLARE_MUTEX(mr_sem);
+
+/* attempt to acquire the semaphore ... */
+if (down_interruptible(&mr_sem)) {
+  /* signal received, semaphore not acquired ... */
+}
+
+/* critical region ... */
+
+/* release the given semaphore */
+up(&mr_sem);
+"""
+
+
+Semaphore Methods
+=---------------=
+Method                                      Description
+--------                                    -------------
+sema_init(struct semaphore *, int)          Initializes the dynamically created semaphore to the given count
+init_MUTEX(struct semaphore *)              Initializes the dynamically created semaphore with a count of one
+init_MUTEX_LOCKED(struct semaphore *)       Initializes the dynamically created semaphore with a count of zero (so it is initially locked)
+down_interruptible (struct semaphore *)     Tries to acquire the given semaphore and enter interruptible sleep if it is contended
+down(struct semaphore *)                    Tries to acquire the given semaphore and enter uninterruptible sleep if it is contended
+down_trylock(struct semaphore *)            Tries to acquire the given semaphore and immediately return nonzero if it is contended
+up(struct semaphore *)                      Releases the given semaphore and wakes awaiting task, if any
+
+
+
+down_interruptible() ---> __down_interruptible() ---> __down_common()
+
+/* Please don't access any members of this structure directly */
+struct semaphore {
+	raw_spinlock_t		lock;
+	unsigned int		count;
+	struct list_head	wait_list;
+};
+
+
+
+Reader-Writer Semaphores
+-----------------------
+- Reader-writer semaphores are represented by the struct rw_semaphore type, which
+is declared in <linux/rwsem.h> .
+- Statically declared reader-writer semaphores are created
+via the following, where name is the declared name of the new semaphore:
+"""
+static DECLARE_RWSEM(name);
+"""
+
+- Reader-writer semaphores created dynamically are initialized via
+"""
+init_rwsem(struct rw_semaphore *sem)
+"""
+
+- All reader-writer semaphores are mutexes—that is, their usage count is one—although
+they enforce mutual exclusion only for writers, not readers.
+- Any number of readers can
+concurrently hold the read lock, so long as there are no writers. Conversely, only a sole
+writer (with no readers) can acquire the write variant of the lock.
+
+- All reader-writer locks
+use uninterruptible sleep, so there is only one version of each down() .
+
+"""
+static DECLARE_RWSEM(mr_rwsem);
+
+/* attempt to acquire the semaphore for reading ... */
+down_read(&mr_rwsem);
+
+/* critical region (read only) ... */
+
+/* release the semaphore */
+up_read(&mr_rwsem);
+
+/* ... */
+
+/* attempt to acquire the semaphore for writing ... */
+down_write(&mr_rwsem);
+
+/* critical region (read and write) ... */
+
+/* release the semaphore */
+up_write(&mr_sem);
+"""
+
+- As with semaphores, implementations of "down_read_trylock()" and down_write_trylock()
+are provided. Each has one parameter: a pointer to a reader-
+writer semaphore.They both return nonzero if the lock is successfully acquired and zero
+if it is currently contended.
+
+- Reader-writer semaphores have a unique method that their reader-writer spin lock
+cousins do not have: "downgrade_write()"" .This function atomically converts an acquired
+write lock to a read lock.
+
+- Reader-writer semaphores, as spin locks of the same nature, should not be used unless
+a clear separation exists between write paths and read paths in your code.
+
+
+
+
+
+Mutexes
+========
+- The mutex is represented by "struct mutex" .
+- It behaves similar to a semaphore with a
+count of one, but it has a simpler interface, more efficient performance, and additional
+constraints on its use.
+
+- To statically define a mutex, you do:
+"""
+DEFINE_MUTEX(name);
+"""
+
+- To dynamically initialize a mutex, you call:
+"""
+mutex_init(&mutex);
+"""
+
+- Locking and unlocking the mutex is easy:
+"""
+mutex_lock(&mutex);
+/* critical region ... */
+mutex_unlock(&mutex);
+"""
+
+Mutex Methods
+=-----------=
+Method                              Description
+mutex_lock(struct mutex *)          Locks the given mutex; sleeps if the lock is unavailable
+mutex_unlock(struct mutex *)        Unlocks the given mutex
+mutex_trylock(struct mutex *)       Tries to acquire the given mutex; returns one if successful and the lock is acquired and zero otherwise
+mutex_is_locked (struct mutex *)    Returns one if the lock is locked and zero otherwise
+
+
+- Only one task can hold the mutex at a time.That is, the usage count on a mutex is
+always one.
+- Whoever locked a mutex must unlock it.That is, you cannot lock a mutex in one
+context and then unlock it in another.
+- Mutex isn’t suitable for
+more complicated synchronizations between kernel and user-space.
+- Recursive locks and unlocks are not allowed.That is, you cannot recursively acquire
+the same mutex, and you cannot unlock an unlocked mutex.
+- A process cannot exit while holding a mutex.
+- A mutex cannot be acquired by an interrupt handler or bottom half, even with
+mutex_trylock().
+- A mutex can be managed only via the official API: It must be initialized via the meth-
+ods described in this section and cannot be copied, hand initialized, or reinitialized.
+
+
+- The most useful aspect of the new struct mutex is that, via a special debugging
+mode, the kernel can programmatically check for and warn about violations of these
+constraints.
+- When the kernel configuration option CONFIG_DEBUG_MUTEXES is enabled, a
+multitude of debugging checks ensure that these (and other) constraints are always
+upheld.
+
+
+Semaphore vs Mutex usage:
+- Unless one of mutex’s additional con-
+straints prevent you from using them, prefer the new mutex type to semaphores.
+- When writing new code, only specific, often low-level, uses need a semaphore.
+
+Spinlocks vs Mutex usage:
+- Only a spin lock can be used
+in interrupt context, whereas only a mutex can be held while a task sleeps.
+
+What to Use: Spin Locks Versus Semaphores
+Requirement                           Recommended Lock
+-------------------                   -------------------------
+Low overhead locking                  Spin lock is preferred.
+Short lock hold time                  Spin lock is preferred.
+Long lock hold time                   Mutex is preferred.
+Need to lock from interrupt context   Spin lock is required.
+Need to sleep while holding lock      Mutex is required.
+
+
+
+
+Completion variables
+====================
+- Using completion variables is an easy way to synchronize between two tasks in the kernel
+when one task needs to signal to the other that an event has occurred.
+- One task waits on
+the completion variable while another task performs some work.When the other task has
+completed the work, it uses the completion variable to wake up any waiting tasks.
+
+- For example, the vfork() system call uses completion variables to
+wake up the parent process when the child process execs or exits.
+
+- Completion variables are represented by the struct completion type, which is de-
+fined in <linux/completion.h> .
+- A statically created completion variable is created and initialized via:
+"""
+DECLARE_COMPLETION(mr_comp);
+"""
+
+- A dynamically created completion variable is initialized via:
+"""
+init_completion()
+"""
+
+- On a given completion variable, the tasks that want to wait call
+"""
+wait_for_completion()
+"""
+- After the event has occurred, calling "complete()" signals all
+waiting tasks to wake up.
+
+
+Completion Variable Methods
+Method                                    Description
+---------------                           ---------------
+init_completion(struct completion *)      Initializes the given dynamically created completion variable
+wait_for_completion(struct completion *)  Waits for the given completion variable to be signaled
+complete(struct completion *)             Signals any waiting tasks to wake up
+
+
+- A common usage is to have a completion variable dynamically created as a member of a
+data structure. Kernel code waiting for the initialization of the data structure calls
+"wait_for_completion()" .When the initialization is complete, the waiting tasks are awak-
+ened via a call to "completion()" .
+
+
+BKL - The Big Kernel Lock (Deprecated)
+=========================
+- The Big Kernel Lock (BKL) is a
+global spin lock that was created to ease the transition from Linux’s original SMP imple-
+mentation to fine-grained locking.
+
+The BKL has some interesting properties:
+- You can sleep while holding the BKL.The lock is automatically dropped when the
+task is unscheduled and reacquired when the task is rescheduled. Of course, this
+does not mean it is always safe to sleep while holding the BKL, merely that you can
+and you will not deadlock.
+- The BKL is a recursive lock.A single process can acquire the lock multiple times
+and not deadlock, as it would with a spin lock.
+- You can use the BKL only in process context. Unlike spin locks, you cannot ac-
+quire the BKL in interrupt context.
+- New users of the BKL are forbidden. With every kernel release, fewer and fewer
+drivers and subsystems rely on the BKL.
+
+
+
+
+Sequential Locks
+================
+- It provides a simple mechanism for reading and writing shared data.
+- It works by maintaining a sequence counter.
+- Whenever the data in question is written to, a
+lock is obtained and a sequence number is incremented.
+- Prior to and after reading the data, the sequence number is read.
+If the values are the same, a write did not begin in the
+middle of the read.
+- Further, if the values are even, a write is not underway. (Grabbing the
+write lock makes the value odd, whereas releasing it makes it even because the lock starts
+at zero.)
+
+- To define a seq lock:
+"""
+seqlock_t mr_seq_lock = DEFINE_SEQLOCK(mr_seq_lock);
+"""
+
+- The write path is then
+"""
+write_seqlock(&mr_seq_lock);
+/* write lock is obtained... */
+write_sequnlock(&mr_seq_lock);
+"""
+
+- This looks like normal spin lock code.The oddness comes in with the read path,
+which is quite a bit different:
+"""
+unsigned long seq;
+do {
+    seq = read_seqbegin(&mr_seq_lock);
+    /* read data here ... */
+} while (read_seqretry(&mr_seq_lock, seq));
+"""
+
+"""
+typedef struct {
+	struct seqcount seqcount;
+	spinlock_t lock;
+} seqlock_t;
+
+/*
+ * Read side functions for starting and finalizing a read side section.
+ */
+static inline unsigned read_seqbegin(const seqlock_t *sl)
+{
+	return read_seqcount_begin(&sl->seqcount);
+}
+
+static inline unsigned read_seqretry(const seqlock_t *sl, unsigned start)
+{
+	return read_seqcount_retry(&sl->seqcount, start);
+}
+
+
+/**
+ * read_seqcount_begin - begin a seq-read critical section
+ * @s: pointer to seqcount_t
+ * Returns: count to be passed to read_seqcount_retry
+ *
+ * read_seqcount_begin opens a read critical section of the given seqcount.
+ * Validity of the critical section is tested by checking read_seqcount_retry
+ * function.
+ */
+static inline unsigned read_seqcount_begin(const seqcount_t *s)
+{
+	seqcount_lockdep_reader_access(s);
+	return raw_read_seqcount_begin(s);
+}
+
+/**
+ * read_seqcount_retry - end a seq-read critical section
+ * @s: pointer to seqcount_t
+ * @start: count, from read_seqcount_begin
+ * Returns: 1 if retry is required, else 0
+ *
+ * read_seqcount_retry closes a read critical section of the given seqcount.
+ * If the critical section was invalid, it must be ignored (and typically
+ * retried).
+ */
+static inline int read_seqcount_retry(const seqcount_t *s, unsigned start)
+{
+	smp_rmb();
+	return __read_seqcount_retry(s, start);
+}
+"""
+
+
+- Seq locks are useful to provide a lightweight and scalable lock for use with many read-
+ers and a few writers.
+- Seq locks, however, favor writers over readers. An acquisition of the
+write lock always succeeds as long as there are no other writers.
+- Readers do not affect the
+write lock, as is the case with reader-writer spin locks and semaphores.
+- Furthermore, pending writers continually cause the read loop to repeat, until
+there are no longer any writers holding the lock.
+
+
+Seq locks are ideal when your locking needs meet most or all these requirements:
+- Your data has a lot of readers.
+- Your data has few writers.
+- Although few in number, you want to favor writers over readers and never allow
+readers to starve writers.
+- Your data is simple, such as a simple structure or even a single integer that, for
+whatever reason, cannot be made atomic.
+
+- A prominent user of the seq lock is jiffies, the variable that stores a Linux machine’s
+uptime
+- On machines that cannot atomi-
+cally read the full 64-bit jiffies_64 variable, get_jiffies_64() is implemented using
+seq locks:
+"""
+u64 get_jiffies_64(void)
+{
+	unsigned int seq;
+	u64 ret;
+
+	do {
+		seq = read_seqbegin(&jiffies_lock);
+		ret = jiffies_64;
+	} while (read_seqretry(&jiffies_lock, seq));
+	return ret;
+}
+"""
+
+- Updating jiffies during the timer interrupt, in turns, grabs the write variant of the
+seq lock:
+"""
+write_seqlock(&jiffies_lock);
+jiffies_64 += 1;
+write_sequnlock(&jiffies_lock);
+"""
+
+
+
+Preemption disabling
+--------------------
+- Because the kernel is preemptive, a process in the kernel can stop running at any instant
+to enable a process of higher priority to run.This means a task can begin running in the
+same critical region as a task that was preempted.To prevent this, the kernel preemption
+code uses spin locks as markers of nonpreemptive regions.
+
+-If a spin lock is held, the kernel is not preemptive.
+
+- Some situations do not require a spin lock, but do need ker-
+nel preemption disabled.The most frequent of these situations is per-processor data.
+
+- even if this were a uniprocessor computer, the variable could be ac-
+cessed pseudo-concurrently by multiple processes.
+
+- To solve this, kernel preemption can be disabled via preempt_disable() .The call is
+nestable; you can call it any number of times. For each call, a corresponding call to
+preempt_enable() is required.The final corresponding call to preempt_enable() reen-
+ables preemption. For example:
+"""
+preempt_disable();
+/* preemption is disabled ... */
+preempt_enable();
+"""
+
+- The preemption count stores the number of held locks and "preempt_disable()" calls.
+If the number is zero, the kernel is preemptive. If the value is one or greater, the kernel is
+not preemptive.This count is incredibly useful—it is a great way to do atomicity and
+sleep debugging.The function "preempt_count()" returns this value.
+
+
+Kernel Preemption-Related Methods
+=--------------------------------=
+Function                    Description
+--------------------        ---------------
+preempt_disable()           Disables kernel preemption by incrementing the preemption counter
+preempt_enable()            Decrements the preemption counter and checks and services any pending reschedules if the count is now zero
+preempt_enable_no_resched() Enables kernel preemption but does not check for any pending reschedules
+preempt_count()             Returns the preemption count
+
+
+- You can obtain the processor number
+(which presumably is used to index into the per-processor data) via "get_cpu()" .
+- This function disables kernel preemption prior to returning the current processor number:
+"""
+int cpu;
+
+/* disable kernel preemption and set “cpu” to the current processor */
+cpu = get_cpu();
+
+/* manipulate per-processor data ... */
+
+/* reenable kernel preemption, “cpu” can change and so is no longer valid */
+put_cpu();
+"""
+
+
+
+Ordering and Barriers
+---------------------
+- both the compiler and the
+processor can reorder reads and writes for performance reasons.
+(Intel x86 processors do not ever reorder writes. That is, they do not do out-of-order stores. But other
+processors do.)
+
+- all processors that do reorder reads or writes provide machine instructions to enforce ordering require-
+ments. It is also possible to instruct the compiler not to reorder instructions around a
+given point.These instructions are called barriers.
+
+- The processor could perform the re-ordering dynamically during execution by fetching and dispatching seemingly unrelated
+instructions in whatever order it feels is best.
+
+
+- The rmb() method provides a read memory barrier. It ensures that no loads are re-
+ordered across the rmb() call. That is, no loads prior to the call will be reordered to after
+the call, and no loads after the call will be reordered to before the call.
+- The wmb() method provides a write barrier. It functions in the same manner as rmb() ,
+but with respect to stores instead of loads—it ensures no stores are reordered across the
+barrier.
+- The mb() call provides both a read barrier and a write barrier. No loads or stores will
+be reordered across a call to mb() .
+- A variant of rmb() , read_barrier_depends() , provides a read barrier but only for loads
+on which subsequent loads depend. All reads prior to the barrier are guaranteed to complete
+before any reads after the barrier that depend on the reads prior to the barrier.
+Basically, it enforces a read barrier, similar to rmb() , but only for certain reads—those that
+depend on each other. On some architectures, read_barrier_depends() is much
+quicker than rmb() because it is not needed and is, thus, a noop.
+
+- This sort of reordering occurs because modern processors dispatch and commit in-
+structions out of order, to optimize use of their pipelines.
+- The rmb() and wmb() functions correspond to instructions that tell the processor
+to commit any pending load or store instructions, respectively, before continuing.
+
+
+- The macros smp_rmb() , smp_wmb() , smp_mb() , and smp_read_barrier_depends()
+provide a useful optimization. On SMP kernels they are defined as the usual memory
+barriers, whereas on UP kernels they are defined only as a compiler barrier.You can use
+these SMP variants when the ordering constraints are specific to SMP systems.
+
+- The barrier() method prevents the compiler from optimizing loads or stores across
+the call. The compiler knows not to rearrange stores and loads in ways that would change
+the effect of the C code and existing data dependencies.
+
+- The previous memory barriers also function as compiler barriers, but a compiler barrier is much lighter
+in weight than a memory barrier. Indeed, a compiler barrier is practically free, because it
+simply prevents the compiler from possibly rearranging things.
+
+
+Memory and Compiler Barrier Methods
+=---------------------------------=
+Barrier                     Description
+-----------                 ---------------
+rmb()                       Prevents loads from being reordered across the barrier
+read_barrier_depends()      Prevents data-dependent loads from being re-ordered across the barrier
+wmb()                       Prevents stores from being reordered across the barrier
+mb()                        Prevents load or stores from being reordered across the barrier
+smp_rmb()                   Provides an rmb() on SMP, and on UP provides a barrier()
+smp_read_barrier_depends()  Provides a read_barrier_depends() on SMP, and provides a barrier() on UP
+smp_wmb()                   Provides a wmb() on SMP, and provides a barrier() on UP
+smp_mb()                    Provides an mb() on SMP, and provides a barrier() on UP
+barrier()                   Prevents the compiler from optimizing stores or loads across the barrier

@@ -1,0 +1,224 @@
+x86
+----
+
+The starting address is formed by adding the base address to the value in the EIP register:
+>>> 0xffff0000 + 0xfff0
+'0xfffffff0'
+
+We get 0xfffffff0, which is 16 bytes below 4GB. This point is called the Reset vector. This
+is the memory location at which the CPU expects to find the first instruction to execute after
+reset. It contains a jump (jmp) instruction that usually points to the BIOS entry point.
+
+
+Reason for x86 reset vector being at 0xFFFFFFF0 instead of 0xFFFFFFFF
+"""
+x86 instructions often take up more than one byte, and a reasonable reset routine will almost certainly point to multiple instructions.
+If the reset vector were to refer to 0xFFFF_FFFF, then only a single byte instruction would fit into that memory mapping;
+almost any useful reset functionality would thus require instructions that cross the 0xFFFF_FFFF/0xFFFF_0000 linear address boundary
+(since the code segment is set up with base 0xFFFF_0000)
+
+By placing the reset code at this address, it's possible to fit a few instructions (including a jump) without requiring valid memory at
+0xFFFF_0000.
+"""
+
+- Now the BIOS starts; after initializing and checking the hardware, the BIOS needs to find a
+bootable device. A boot order is stored in the BIOS configuration, controlling which devices
+the BIOS attempts to boot from.
+
+- When attempting to boot from a hard drive, the BIOS tries to
+find a boot sector. On hard drives partitioned with an MBR partition layout, the boot sector is
+stored in the first 446 bytes of the first sector, where each sector is 512 bytes.
+
+- The final two bytes of the first sector are
+0x55 and 0xaa
+, which designates to the BIOS that this device is bootable.
+
+- From this point onwards, the BIOS
+hands over control to the bootloader.
+
+- NOTE: As explained above, the CPU is in real mode; in real mode, calculating the physical
+address in memory is done as follows:
+PhysicalAddress = Segment Selector * 16 + Offset
+
+
+0xFFFE_0000 - 0xFFFF_FFFF: 128 kilobyte ROM mapped into address space
+At the start of execution, the BIOS is not in RAM, but in ROM.
+
+
+
+Bootloader
+-----------
+- The Linux kernel has a Boot protocol which specifies the requirements for a bootloader to
+implement Linux support.
+- execution starts from boot.img. This code is very simple, due to the
+limited amount of space available, and contains a pointer which is used to jump to the
+location of GRUB 2's core image.
+- The core image begins with diskboot.img, which is usually
+stored immediately after the first sector in the unused space before the first partition.
+- The above code loads the rest of the core image, which contains GRUB 2's kernel and drivers for
+handling filesystems, into memory. After loading the rest of the core image, it executes
+"grub_main".
+
+- "grub_main"
+  initializes the console,
+  gets the base address for modules,
+  sets the root device,
+  loads/parses the grub configuration file,
+  loads modules, etc.
+- At the end of execution, "grub_main" moves grub to normal mode.
+
+"""
+/* The main routine.  */
+void __attribute__ ((noreturn))
+grub_main (void)
+{
+  /* First of all, initialize the machine.  */
+  grub_machine_init ();
+
+  grub_boot_time ("After machine init.");
+
+  /* Hello.  */
+  grub_setcolorstate (GRUB_TERM_COLOR_HIGHLIGHT);
+  grub_printf ("Welcome to GRUB!\n\n");
+  grub_setcolorstate (GRUB_TERM_COLOR_STANDARD);
+
+  /* Init verifiers API. */
+  grub_verifiers_init ();
+
+  grub_load_config ();
+
+  grub_boot_time ("Before loading embedded modules.");
+
+  /* Load pre-loaded modules and free the space.  */
+  grub_register_exported_symbols ();
+#ifdef GRUB_LINKER_HAVE_INIT
+  grub_arch_dl_init_linker ();
+#endif
+  grub_load_modules ();
+
+  grub_boot_time ("After loading embedded modules.");
+
+  /* It is better to set the root device as soon as possible,
+     for convenience.  */
+  grub_set_prefix_and_root ();
+  grub_env_export ("root");
+  grub_env_export ("prefix");
+
+  /* Reclaim space used for modules.  */
+  reclaim_module_space ();
+
+  grub_boot_time ("After reclaiming module space.");
+
+  grub_register_core_commands ();
+
+  grub_boot_time ("Before execution of embedded config.");
+
+  if (load_config)
+    grub_parser_execute (load_config);
+
+  grub_boot_time ("After execution of embedded config. Attempt to go to normal mode");
+
+  grub_load_normal_mode ();
+  grub_rescue_run ();
+}
+"""
+
+- grub_normal_execute (from grub-core/normal/main.c) completes the final preparations and
+shows a menu to select an operating system.
+- When we select one of the grub menu entries, "grub_menu_execute_entry" runs,
+executing the grub "boot" command and booting the selected operating system.
+
+- the bootloader must read and fill some fields of the kernel setup header, which starts at the
+0x01f1 offset from the kernel setup code.
+
+- The kernel header arch/x86/boot/header.S starts from:
+"""
+.globl hdr
+hdr:
+setup_sects: .byte 0
+root_flags: .word ROOT_RDONLY
+syssize: .long 0
+ram_size: .word 0
+vid_mode: .word SVGA_MODE
+root_dev: .word 0
+boot_flag: .word 0xAA55
+"""
+
+- The bootloader must fill this and the rest of the headers, which are only marked as being
+type 'write' in the Linux boot protocol, with values which it has
+either received from the command line or calculated.
+
+
+- The traditional memory map for the kernel loader, used for Image or zImage kernels, typically looks like:
+"""
+        |                        |
+0A0000  +------------------------+
+        |  Reserved for BIOS     |      Do not use.  Reserved for BIOS EBDA.
+09A000  +------------------------+
+        |  Command line          |
+        |  Stack/heap            |      For use by the kernel real-mode code.
+098000  +------------------------+
+        |  Kernel setup          |      The kernel real-mode code.
+090200  +------------------------+
+        |  Kernel boot sector    |      The kernel legacy boot sector.
+090000  +------------------------+
+        |  Protected-mode kernel |      The bulk of the kernel image.
+010000  +------------------------+
+        |  Boot loader           |      <- Boot sector entry point 0000:7C00
+001000  +------------------------+
+        |  Reserved for MBR/BIOS |
+000800  +------------------------+
+        |  Typically used by MBR |
+000600  +------------------------+
+        |  BIOS use only         |
+000000  +------------------------+
+"""
+
+- when the bootloader transfers control to the kernel, it starts at:
+"""
+X + sizeof(KernelBootSector) + 1
+"""
+where X is the address of the kernel boot sector being loaded.
+
+
+- The bootloader has now loaded the Linux kernel into memory, filled the header fields, and
+then jumped to the corresponding memory address.
+
+
+Start of kernel setup
+---------------------
+- Kernel setup execution starts from arch/x86/boot/header.S at _start.
+- The actual kernel setup entry point is:
+"""
+.globl  _start
+_start:
+        # Explicitly enter this as bytes, or the assembler
+        # tries to generate a 3-byte jump here, which causes
+        # everything else to push off to the wrong offset.
+        .byte   0xeb            # short (2-byte) jump
+        .byte   start_of_setup-1f
+...
+"""
+
+- The bootloader (grub2 and others) knows about this point (0x200 offset from MZ)
+and makes a jump directly to it, despite the fact that
+header.S starts from the .bstext section.
+
+- Right after the setup header, we see the .entrytext section, which starts at the
+start_of_setup label.
+"""
+# End of setup header #####################################################
+
+        .section ".entrytext", "ax"
+start_of_setup:
+# Force %es = %ds
+        movw    %ds, %ax
+        movw    %ax, %es
+        cld
+"""
+
+- After the jump to start_of_setup, the kernel needs to do the following:
+    - Make sure that all segment register values are equal
+    - Set up a correct stack, if needed
+    - Set up bss
+    - Jump to the C code in main.c
