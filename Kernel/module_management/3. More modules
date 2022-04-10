@@ -1,0 +1,35 @@
+q) how to check which module cause the kernel taint?
+
+
+
+q) module.symvers file content?
+Ans: Symbols related information, like symbols exported.
+
+q) use case of srcversion
+Ans: to distinguish between older modules with same name. Its an MD4 hash so will be different for every file.
+
+q) to see all sections in .ko file
+Ans: $ objdump --section-headers ./file.ko
+
+q) buffer size of kernel buf?
+Ans: 1<<18. CONFIG_LOG_BUF_SHIFT value in /boot/config-version file
+
+q) how to change it?
+Ans: 
+1) use kernel command line, enter command: log_buf_len=4
+2) use menuconfig, but kernel recompilation will be required
+
+
+q) insmod working - functions called.
+Ans:
+init_module() ----> sys_init_module() [permission verification] -----> load_module() -----> copy_from_user ()
+
+load_module() does all the other tasks. Refer to digital notes
+
+
+
+q) dump_stack() prints CPU register values - at what point? Kernel entry point?
+
+
+q) oops vs kernel panic?
+-oops we can continue operation, kills the process.... in the case of panic, we cannot continue operation.

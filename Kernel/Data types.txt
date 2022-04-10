@@ -1,0 +1,57 @@
+
+Type Definitions
+----------------
+The kernel uses typedef to define various data types in order to make itself independent of architecture-
+specific features because of the different bit lengths for standard data types on individual processors.
+
+eg:
+  sector_t (to specify a sector number on a block device),
+  pid_t (to indicate a process identifier)
+
+- They are defined by the kernel in architecture-specific code in such
+a way as to ensure that they represent the applicable value range.
+
+- Kernel defines several integer data types that not only indicate explicitly whether they
+are signed or unsigned, but also specify the exact number of bits they comprise.
+
+- __s8 and __u8 are, for example, 8-bit integers that are either signed ( __s8 ) or
+unsigned ( __u8 ). __u16 and __s16 , __u32 and __s32 , and __u64 and __s64 are defined in the same way.
+
+
+Byte order
+----------
+- either the big endian or little endian format. The format
+indicates how multibyte data types are stored.
+
+- The kernel provides various functions and macros to convert between the format used by the CPU and
+specific representations: "cpu_to_le64" converts a 64-bit data type to little endian format, and "le64_to_cpu"
+does the reverse.
+
+Per-CPU variables
+-------------------
+- They are
+declared with DEFINE_PER_CPU(name, type) , where name is the variable name and type is the data type
+(e.g., int[3] , struct hash , etc.).
+
+- On SMP systems with several CPUs, an instance of the variable is created for each CPU.
+- The instance for a particular CPU is selected with "get_cpu(name, cpu)" ,
+where smp_processor_id() , which
+returns the identifier of the active processor, is usually used as the argument for cpu .
+
+- Employing per-CPU variables has the advantage that the data required are more likely to be present
+in the cache of a processor and can therefore be accessed faster.
+
+
+__user
+-------
+- The kernel uses them to identify pointers to areas in user address space that may not be
+de-referenced without further precautions.
+
+- memory is mapped via page tables into the
+userspace portion of the virtual address space and not directly mapped by physical memory.
+
+- Therefore
+the kernel needs to ensure that the page frame in RAM that backs the destination is actually present
+
+- Explicit labeling supports the use of an automatic checker tool
+( sparse ) to ensure that this requirement is observed in practice.

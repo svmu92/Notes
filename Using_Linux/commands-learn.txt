@@ -1,0 +1,331 @@
+sed
+===
+SED can be used in many different ways, such as:
+  Text substitution,
+  Selective printing of text files,
+  In-a-place editing of text files,
+  Non-interactive editing of text files, and many more.
+
+
+Read ---> Execute ---> Display
+
+Read: SED reads a line from the input stream (file, pipe, or stdin) and stores it in its internal buffer called pattern buffer.
+
+Execute: All SED commands are applied sequentially on the pattern buffer. By default, SED commands are applied on all lines (globally)
+unless line addressing is specified.
+
+Display: Send the (modified) contents to the output stream. After sending the data, the pattern buffer will be empty.
+
+The above process repeats until the file is exhausted.
+
+- Pattern buffer is a private, in-memory, volatile storage area used by the SED.
+- By default, all SED commands are applied on the pattern buffer, hence the input file remains unchanged.
+
+- There is another memory area called hold buffer which is also private, in- memory, volatile storage area.
+Data can be stored in a hold buffer for later retrieval. At the end of each cycle, SED removes the contents
+of the pattern buffer but the contents of the hold buffer remains persistent between SED cycles. However SED
+commands cannot be directly executed on hold buffer, hence SED allows data movement between the hold buffer
+and the pattern buffer.
+
+- If no input files are provided, then SED accepts input from the standard input stream (stdin).
+
+
+
+SED can be invoked in the following two forms:
+
+sed [-n] [-e] 'command(s)' files
+sed [-n] -f scriptfile files
+
+The first form allows to specify the commands in-line and they are enclosed within single quotes.
+The later allows to specify a script file that contains SED commands.
+
+
+SED supports the following standard options:
+
+-n: Default printing of pattern buffer.
+
+-e : Next argument is an editing command. Here, angular brackets imply mandatory parameter. By using this option,
+we can specify multiple commands.
+
+-f : Next argument is a file containing editing commands. The angular brackets imply mandatory parameter.
+
+
+
+GNU specific options:
+
+-n, --quiet, --silent: Same as standard -n option.
+
+-e script, --expression=script: Same as standard -e option.
+
+-f script-file, --file=script-file: Same as standard -f option.
+
+--follow-symlinks: If this option is provided, the SED follows symbolic links while editing files in place.
+
+-i[SUFFIX], --in-place[=SUFFIX]: This option is used to edit file in place. If suffix is provided, it takes
+a backup of the original file, otherwise it overwrites the original file.
+
+-l N, --line-lenght=N: This option sets the line length for l command to N characters.
+
+--posix: This option disables all GNU extensions.
+
+-r, --regexp-extended: This option allows to use extended regular expressions rather than basic regular expressions.
+
+-u, --unbuffered: When this option is provided, the SED loads minimal amount of data from the input files and flushes
+the output buffers more often. It is useful for editing the output of "tail -f" when you do not want to wait for the output.
+
+-z, --null-data: By default, the SED separates each line by a new-line character. If NULL-data option is provided,
+it separates the lines by NULL characters.
+
+
+
+
+
+
+SED can jump to the line marked by the label and continue executing the remaining commands. In SED, we can define a label as follows:
+:label
+:start
+:end
+:up
+
+To jump to a specific label, we can use the b command followed by the label name.
+If the label name is omitted, then the SED jumps to the end of the SED file.
+
+
+
+Branches can be created using the t command. The t command jumps to the label only if the previous substitute command was successful.
+
+
+
+By default, SED operates on all lines. But we can force SED to operate only on certain lines.
+Eg:
+  $ sed -n '3p' books.txt
+  $ sed -n '2,5 p' books.txt
+  $ sed -n '3,$ p' books.txt
+
+M, +n will print the next n lines starting from line number M.
+Eg:
+  $ sed -n '2,+4 p' books.txt
+
+M~n form indicates that SED should start at line number M and process every n(th) line.
+Eg:
+  $ sed -n '1~2 p' books.txt
+
+
+
+
+ A pattern range can be a simple text or a complex regular expression.
+ Eg:
+  $ sed -n '/Paulo/ p' books.txt
+  $ sed -n '/Alchemist/, 5 p' books.txt
+
+We can also specify more than one pattern ranges using the comma(,) operator.
+Eg:
+  $ sed -n '/Two/, /Pilgrimage/ p' books.txt
+  $ sed -n '/Two/, +4 p' books.txt
+
+
+
+
+Basic Commands:
+
+Delete - [address1[,address2]]d
+Eg:
+  $ sed 'd' books.txt
+  $ sed '4d' books.txt
+  $ sed '2, 4 d' books.txt
+  $ sed '/Paulo Coelho/d' books.txt
+  $ sed '/Storm/,/Fellowship/d' books.txt
+
+
+Write - [address1[,address2]]w file
+Eg:
+  $ sed -n 'w books.bak' books.txt
+  $ sed -n '2~2 w junk.txt' books.txt
+  $ sed -n -e '/Martin/ w Martin.txt' -e '/Paulo/ w Paulo.txt' -e '/Tolkien/ w Tolkien.txt' books.txt
+
+
+Append -
+[address]a\
+Append text
+
+Eg:
+  $ sed '4 a 7) Adultry, Paulo Coelho, 234' books.txt
+  $ sed '$ a 7) Adultry, Paulo Coelho, 234' books.txt
+  $ sed '/The Alchemist/ a 7) Adultry, Paulo Coelho, 234' books.txt
+
+
+Change -
+[address1[,address2]]c\
+Replace text
+
+Eg:
+  $ sed '3 c 3) Adultry, Paulo Coelho, 324' books.txt
+  $ sed '/The Alchemist/ c 3) Adultry, Paulo Coelho, 324' books.txt
+  $ sed '4, 6 c 4) Adultry, Paulo Coelho, 324' books.txt
+
+
+Insert -
+[address]i\
+Insert text
+
+Eg:
+  $ sed '4 i 7) Adultry, Paulo Coelho, 324' books.txt
+  $ sed '1 i 7) Adultry, Paulo Coelho, 324' books.txt
+  $ sed '$ i 7) Adultry, Paulo Coelho, 324\
+  > 8) Eleven Minutes, Paulo Coelho, 304' books.txt
+
+
+
+Translate - [address1[,address2]]y/list-1/list-2/
+Note: Translation is based on the position of the character from list 1 to the character in the same position in list 2
+and both lists must be explicit character lists. Regular expressions and character classes are unsupported.
+Additionally, the size of list 1 and list 2 must be same.
+
+Eg:
+  $ echo "1 5 15 20" | sed 'y/151520/IVXVXX/'
+
+
+
+l Command -
+[address1[,address2]]l
+[address1[,address2]]l [len]
+
+Eg:
+  $ sed -n 'l' junk.txt
+  $ sed -n 'l 25' books.txt
+  $ sed -n 'l 0' books.txt
+
+
+Quit -
+[address]q
+[address]q [value]
+
+Eg:
+  $ sed '3 q' books.txt
+  $ sed '/The Alchemist/ q' books.txt
+  $ sed '/The Alchemist/ q 100' books.txt
+
+
+
+Read - [address]r file
+
+Eg:
+  $ sed '3 r junk.txt' books.txt
+  $ sed '3, 5 r junk.txt' books.txt
+  $ sed '/Paulo/ r junk.txt' books.txt
+
+
+
+Execute - [address1[,address2]]e [command]
+
+Eg:
+  $ sed '3 e date' books.txt
+  $ sed '/Paulo/ e date' books.txt
+  $ sed 'e' commands.txt
+
+
+
+Miscellaneous
+
+[address1[,address2]]N
+Eg:
+  $ sed 'N; s/\n/, /g' books.txt
+
+
+[address1[,address2]]P
+Eg:
+  $ sed -n 'N;P' books.txt
+  $ sed -n 'P' books.txt
+
+
+[address1[,address2]]v [version]
+Eg:
+  $ sed 'v 4.2.3' books.txt
+
+
+
+= command -
+[/pattern/]=
+[address1[,address2]]=
+
+Eg:
+  $ sed '=' books.txt
+  $ sed '1, 4=' books.txt
+  $ sed '/Paulo/ =' books.txt
+  $ sed -n '$ =' books.txt
+
+
+
+& command -
+Whenever a pattern match succeeds, this special character stores the matched pattern.
+
+Eg:
+  $ sed 's/[[:digit:]]/Book number &/' books.txt
+  $ sed 's/[[:digit:]]*$/Pages = &/' books.txt
+
+
+
+substitution - [address1[,address2]]s/pattern/replacement/[flags]
+
+Eg:
+  $ sed 's/,/ | /' books.txt
+  $ sed 's/,/ | /g' books.txt
+  $ sed '/The Pilgrimage/ s/,/ | /g' books.txt
+  $ sed 's/,/ | /2' books.txt
+  $ sed -n 's/Paulo Coelho/PAULO COELHO/p' books.txt
+  $ sed -n 's/Paulo Coelho/PAULO COELHO/w junk.txt' books.txt
+
+
+
+
+
+
+
+
+
+grep
+=====
+grep [OPTIONS] PATTERN [FILE...]
+grep [OPTIONS] [-e PATTERN | -f FILE] [FILE...]
+
+
+OPTIONS
+-------
+-A NUM, --after-context=NUM  - Print NUM lines of trailing context after matching lines.
+
+-B NUM, --before-context=NUM - Print NUM lines of leading context before matching lines.
+
+-C NUM, --context=NUM - Print NUM lines of output context.
+
+-b, --byte-offset	- Print the byte offset within the input file before each line of output
+
+-D ACTION, --devices=ACTION - If an input file is a device, FIFO or socket, use ACTION to process it.
+By default, ACTION is read, which means that devices are read just as if they were ordinary files.
+If ACTION is skip, devices are silently skipped.
+
+-d ACTION, --directories=ACTION - If an input file is a directory, use ACTION to process it.
+By default,ACTION is read, which means that directories are read just as if they were ordinary files.
+If ACTION is skip, directories are silently skipped.
+If ACTION is recurse, grep reads all files under each directory, recursively; this is equivalent to the -r option.
+
+-E, --extended-regexp	- Interpret PATTERN as an extended regular expression
+
+-e PATTERN, --regexp=PATTERN - Use PATTERN as the pattern; useful to protect patterns beginning with -.
+
+ -F, --fixed-strings - Interpret PATTERN as a list of fixed strings, separated by newlines, any of which is to be matched.
+
+-f FILE, --file=FILE - Obtain patterns from FILE, one per line. The empty file contains zero patterns, and therefore matches nothing.
+
+-G, --basic-regexp	- Interpret PATTERN as a basic regular expression (see below). This is the default.
+
+-H, --with-filename - Print the filename for each match.
+
+-h, --no-filename - Suppress the prefixing of filenames on output when multiple files are searched.
+
+-i, --ignore-case	- Ignore case distinctions in both the PATTERN and the input files.
+
+-L, --files-without-match	- Suppress normal output; instead print the name of each input file from which
+no output would normally have been printed. The scanning will stop on the first match.
+
+-l, --files-with-matches - Suppress normal output; instead print the name of each input file from which
+output would normally have been printed. The scanning will stop on the first match.

@@ -1,0 +1,423 @@
+
+- In multiprocessor systems, the number of processes that can truly run in parallel is
+determined by the number of physical CPUs.
+
+
+Scheduler main tasks:-
+1) The kernel must decide how much time to devote to each process and when to switch to the next
+process. This begs the question as to which process is actually the next. Decisions of this kind are
+not platform-dependent.
+
+2) When the kernel switches from process A to process B, it must ensure that the execution envi-
+ronment of B is exactly the same as when it last withdrew processor resources. For example, the
+contents of the processor registers and the structure of virtual address space must be identical.
+This latter task is extremely dependent on processor type. It cannot be implemented with C only,
+but requires help by pure assembler portions.
+
+
+- In this scheme, known as "preemptive multitasking", each process is allocated a certain time period during
+which it may execute. Once this period has expired, the kernel withdraws control from the process and
+lets a different process run — regardless of the last task performed by the previous process. Its runtime
+environment — essentially, the contents of all CPU registers and the page tables — is, of course, saved
+so that results are not lost and the process environment is fully reinstated when its turn comes around
+again. The length of the time slice varies depending on the importance of the process (and therefore
+on the priority assigned to it).
+
+States of a process:-
+- Running
+- Waiting
+- Sleeping
+- Stopped
+
+- Zombie (special state)
+(parent didn't call wait(4)). RAM, connections
+to peripherals, etc. have already been released so that they cannot and never will run again.
+
+
+kernel preemption - This option supports switches to another process, if this is urgently required, even during the execution
+of system calls in kernel mode.
+
+- Normal processes may always be interrupted — even by other processes.
+- If the system is in kernel mode and is processing a system call, no other process in the system
+is able to cause withdrawal of CPU time.
+- However, the system call can be suspended by an interrupt.
+- Interrupts can suspend processes in user mode and in kernel mode.
+
+
+
+- Processes are represented by a data structure named "task_struct" and defined in <include/sched.h>.
+"""
+struct task_struct {
+#ifdef CONFIG_THREAD_INFO_IN_TASK
+	/*
+	 * For reasons of header soup (see current_thread_info()), this
+	 * must be the first element of task_struct.
+	 */
+	struct thread_info		thread_info;
+#endif
+
+  /* -1 unrunnable, 0 runnable, >0 stopped: */
+volatile long			state;
+
+	/*
+	 * This begins the randomizable portion of task_struct. Only
+	 * scheduling-critical items should be added above here.
+	 */
+	randomized_struct_fields_start
+
+	void				*stack;
+	refcount_t			usage;
+	/* Per task flags (PF_*), defined further below: */
+	unsigned int			flags;
+	unsigned int			ptrace;
+  #ifdef CONFIG_SMP
+  	int				on_cpu;
+  	struct __call_single_node	wake_entry;
+  #ifdef CONFIG_THREAD_INFO_IN_TASK
+  	/* Current CPU: */
+  	unsigned int			cpu;
+  #endif
+  ...
+  ...
+  int				on_rq;
+  int				prio;
+  int				static_prio;
+  int				normal_prio;
+  unsigned int			rt_priority;
+
+  const struct sched_class	*sched_class;
+  struct sched_entity		se;
+  struct sched_rt_entity		rt;
+#ifdef CONFIG_CGROUP_SCHED
+  struct task_group		*sched_task_group;
+#endif
+  struct sched_dl_entity		dl;
+  ...
+  unsigned int			policy;
+	int				nr_cpus_allowed;
+	const cpumask_t			*cpus_ptr;
+	cpumask_t			cpus_mask;
+  ...
+  ...
+  struct sched_info		sched_info;
+
+	struct list_head		tasks;
+#ifdef CONFIG_SMP
+	struct plist_node		pushable_tasks;
+	struct rb_node			pushable_dl_tasks;
+#endif
+
+	struct mm_struct		*mm;
+	struct mm_struct		*active_mm;
+
+	/* Per-thread vma caching: */
+	struct vmacache			vmacache;
+
+#ifdef SPLIT_RSS_COUNTING
+	struct task_rss_stat		rss_stat;
+#endif
+	int				exit_state;
+	int				exit_code;
+	int				exit_signal;
+  ...
+  ...
+  pid_t				pid;
+	pid_t				tgid;
+  ...
+  /* Real parent process: */
+	struct task_struct __rcu	*real_parent;
+
+	/* Recipient of SIGCHLD, wait4() reports: */
+	struct task_struct __rcu	*parent;
+
+	/*
+	 * Children/sibling form the list of natural children:
+	 */
+	struct list_head		children;
+	struct list_head		sibling;
+	struct task_struct		*group_leader;
+  ...
+
+  u64				utime;
+  u64				stime;
+  ...
+  ...
+  /*
+	 * executable name, excluding path.
+	 *
+	 * - normally initialized setup_new_exec()
+	 * - access it with [gs]et_task_comm()
+	 * - lock it with task_lock()
+	 */
+	char				comm[TASK_COMM_LEN];
+  ...
+  ...
+"""
+
+Structure contents can be broken down into sections:
+
+- State and execution information such as pending signals, binary format used (and any emulation
+information for binary formats of other systems), process identification number (pid), pointers to
+parents and other related processes, priorities, and time information on program execution (e.g.,
+CPU time).
+
+- Information on allocated virtual memory.
+
+- Process credentials such as user and group ID, capabilities, 2 and so on.
+
+- Files used: Not only the binary file with the program code but also filesystem information on all
+files handled by the process must be saved.
+
+- Thread information, which records the CPU-specific runtime data of the process
+
+- Information on interprocess communication required when working with other applications.
+
+- Signal handlers used by the process to respond to incoming signals.
+
+
+
+-"state" specifies the current state of a process and accepts the following values (these are pre-processor
+constants defined in <sched.h>):
+TASK_RUNNING means that a task is in a runnable state.
+TASK_INTERRUPTIBLE is set for a sleeping process that is waiting for some event or other.
+TASK_UNINTERRUPTIBLE is used for sleeping processes disabled on the instructions of the kernel.
+TASK_STOPPED indicates that the process was stopped on purpose — by a debugger, for example.
+TASK_TRACED is not a process state per se — it is used to distinguish stopped tasks that are cur-
+rently being traced (using the ptrace mechanism) from regular stopped tasks.
+
+
+- "exit_state":
+EXIT_ZOMBIE is the zombie state
+EXIT_DEAD is the state after an appropriate wait system call has been issued and before the task
+is completely removed from the system. This state is only of importance if multiple threads issue
+wait calls for the same task.
+
+
+- Linux provides the resource limit (rlimit) mechanism to impose certain system resource usage limits on
+processes. The mechanism makes use of the rlim array (now embedded in struct signal_struct *signal)
+in task_struct, whose elements are of the "struct rlimit" type.
+"""
+<resource.h>
+struct rlimit {
+    unsigned long rlim_cur;
+    unsigned long rlim_max;
+}
+"""
+- rlim_cur is the current resource limit for the process. It is also referred to as the soft limit.
+- rlim_max is the maximum allowed value for the limit. It is therefore also referred to as the
+hard limit.
+
+- The setrlimit() system call is used to increase or decrease the current limit. However, the value specified
+in rlim_max may not be exceeded.
+- getrlimits() is used to check the current limit.
+
+- RLIM_INFINITY is used as the default value for rlim_max, except:
+  1) The number of open files ( RLIMIT_NOFILE , limited to 1,024 by default).
+  2) The maximum number of processes per user ( RLIMIT_NPROC ), defined as max_threads/2 .
+  max_threads is a global variable whose value specifies how many threads may be generated so
+  that an eighth of available RAM is used only for management of thread information, given a
+  minimum possible memory usage of 20 threads.
+
+- The boot-time limits for the init task are defined in INIT_RLIMITS in <include/asm-generic/resource.h>.
+
+
+"""
+$ cat /proc/<pid>/limits
+"""
+
+
+
+
+
+Namespaces
+==========
+- Namespaces provide a lightweight form of virtualization by allowing us to view the global properties of
+a running system under different aspects.
+
+- global resources are abstracted in namespaces.
+
+- This allows for putting a group of processes into a
+container, and one container is separated from other containers.
+
+- The separation can be such that members
+of one container have no connection whatsoever with other containers.
+
+- Every formerly global resource must be
+wrapped up in a container data structure, and only tuples of the resource and the containing namespace
+are globally unique.
+
+- Namespaces can be hierarchical (parent-child relationship) or non-hierarchical.
+
+- Old implementation in linux - chroot system call. This method allows for restricting processes to a certain part of
+the filesystem and is thus a simple namespace mechanism.
+
+New namespaces can be established in two ways:
+1. When a new process is created with the fork or clone system call, specific options control if
+namespaces will be shared with the parent process, or if new namespaces are created.
+2. The unshare system call dissociates parts of a process from the parent, and this also includes
+namespaces.
+
+
+
+- Each kernel subsystem that is aware of namespaces must
+provide a data structure that collects all objects that must be available on a per-namespace basis.
+
+- "struct nsproxy" is used to collect pointers to the subsystem-specific namespace wrappers:
+"""
+/*
+ * A structure to contain pointers to all per-process
+ * namespaces - fs (mount), uts, network, sysvipc, etc.
+ *
+ * The pid namespace is an exception -- it's accessed using
+ * task_active_pid_ns.  The pid namespace here is the
+ * namespace that children will use.
+ *
+ * 'count' is the number of tasks holding a reference.
+ * The count for each namespace, then, will be the number
+ * of nsproxies pointing to it, not the number of tasks.
+ *
+ * The nsproxy is shared by tasks which share all namespaces.
+ * As soon as a single namespace is cloned or unshared, the
+ * nsproxy is copied.
+ */
+struct nsproxy {
+        atomic_t count;
+        struct uts_namespace *uts_ns;
+        struct ipc_namespace *ipc_ns;
+        struct mnt_namespace *mnt_ns;
+        struct pid_namespace *pid_ns_for_children;
+        struct net           *net_ns;
+        struct time_namespace *time_ns;
+        struct time_namespace *time_ns_for_children;
+        struct cgroup_namespace *cgroup_ns;
+};
+extern struct nsproxy init_nsproxy;
+"""
+
+Currently the following areas of the kernel are aware of namespaces:
+- The UTS namespace contains the name of the running kernel, and its version, the underlying
+architecture type, and so on. UTS is a shorthand for Unix Timesharing System.
+- All information related to inter-process communication (IPC) is stored in struct
+ipc_namespace .
+- The view on the mounted filesystem is given in struct mnt_namespace .
+- struct pid_namespace provides information about process identifiers.
+- struct user_namespace is required to hold per-user information that allows for limiting
+resource usage for individual users.
+- struct net_ns contains all networking-related namespace parameters.
+
+
+- Since fork can be instructed to
+open a new namespace when a new task is created, appropriate flags to control the behavior must be
+provided. One flag is available for each individual namespace:
+"""
+#define CLONE_NEWCGROUP         0x02000000      /* New cgroup namespace */
+#define CLONE_NEWUTS            0x04000000      /* New utsname namespace */
+#define CLONE_NEWIPC            0x08000000      /* New ipc namespace */
+#define CLONE_NEWUSER           0x10000000      /* New user namespace */
+#define CLONE_NEWPID            0x20000000      /* New pid namespace */
+#define CLONE_NEWNET            0x40000000      /* New network namespace */
+"""
+
+- Each task is associated with his own view of the namespaces:
+<sched.h>
+struct task_struct {
+		...
+		/* namespaces */
+		struct nsproxy *nsproxy;
+		...
+}
+
+- Support for namespaces must be enabled at compile time on a per-namespace basis. Generic
+support for namespaces is, however, always compiled in.
+
+- The initial global namespace is defined by init_nsproxy , which keeps pointers to the initial objects of
+the per-subsystem namespaces:
+"""
+struct nsproxy init_nsproxy = {
+        .count                  = ATOMIC_INIT(1),
+        .uts_ns                 = &init_uts_ns,
+#if defined(CONFIG_POSIX_MQUEUE) || defined(CONFIG_SYSVIPC)
+        .ipc_ns                 = &init_ipc_ns,
+#endif
+        .mnt_ns                 = NULL,
+        .pid_ns_for_children    = &init_pid_ns,
+#ifdef CONFIG_NET
+        .net_ns                 = &init_net,
+#endif
+#ifdef CONFIG_CGROUPS
+        .cgroup_ns              = &init_cgroup_ns,
+#endif
+#ifdef CONFIG_TIME_NS
+        .time_ns                = &init_time_ns,
+        .time_ns_for_children   = &init_time_ns,
+#endif
+};
+"""
+
+
+UTS Namespace
+-------------
+
+- "include/linux/utsname.h"
+"""
+struct uts_namespace {
+        struct new_utsname name;
+        struct user_namespace *user_ns;
+        struct ucounts *ucounts;
+        struct ns_common ns;
+} __randomize_layout;
+extern struct uts_namespace init_uts_ns;
+"""
+
+- "include/uapi/linux/utsname.h"
+"""
+struct new_utsname {
+        char sysname[__NEW_UTS_LEN + 1];
+        char nodename[__NEW_UTS_LEN + 1];
+        char release[__NEW_UTS_LEN + 1];
+        char version[__NEW_UTS_LEN + 1];
+        char machine[__NEW_UTS_LEN + 1];
+        char domainname[__NEW_UTS_LEN + 1];
+};
+"""
+- The individual strings store the name of the system ( Linux ...), the kernel release, the machine
+name, and so on.
+
+- The current values can be determined using the uname tool, but are also visible in
+/proc/sys/kernel/:
+
+
+- The initial settings are stored in init_uts_ns :
+"""
+struct uts_namespace init_uts_ns = {
+        .ns.count = REFCOUNT_INIT(2),
+        .name = {
+                .sysname        = UTS_SYSNAME,
+                .nodename       = UTS_NODENAME,
+                .release        = UTS_RELEASE,
+                .version        = UTS_VERSION,
+                .machine        = UTS_MACHINE,
+                .domainname     = UTS_DOMAINNAME,
+        },
+        .user_ns = &init_user_ns,
+        .ns.inum = PROC_UTS_INIT_INO,
+#ifdef CONFIG_UTS_NS
+        .ns.ops = &utsns_operations,
+#endif
+};
+"""
+
+- The pre-processor constants are defined on various places across the kernel. UTS_RELEASE is, for instance,
+set in <utsrelease.h> , which is dynamically generated at build time by the top-level Makefile .
+
+
+- creating a new UTS namespace - responsibility of the function "copy_utsname()" .
+- The function is called when a process is forked and the flag CLONE_NEWUTS
+specifies that a new UTS namespace is to be established.
+- A copy of the previous instance
+of uts_namespace is generated, and a corresponding pointer is installed into the nsproxy instance of the
+current task.
+
+
+The User Namespace
+------------------

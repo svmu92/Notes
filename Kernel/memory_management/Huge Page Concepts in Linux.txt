@@ -1,0 +1,115 @@
+Huge page concepts in linux
+------------------------------
+Date: Mar 15, 2022
+
+
+struct page for each page in the system.
+ - page flags
+ - reference count
+ - map count
+
+
+Page tables -
+
+mm struct - mm->pgd - pgd page
+
+pgd page --> pud page --> pmd page --> pte page --> user data page
+
+page - 4k
+word - 8bytes
+512 entries per page
+
+
+typed for containing page table.
+
+user data ---> PFN or Physical address
+
+Entries contain flags:
+ - _PAGE_RW
+ - _PAGE_DIRTY
+ - _PAGE_PSE
+
+
+
+virtual/linear address
+ pgd_offset into pgd page
+   pgd_t points  to pud page
+
+ pud_offset into pud page
+   pud_t points to pmd page
+
+
+
+q) why do we use a 4/5 level page table ??
+
+
+
+TLB - virtual to physical translation
+
+virtual address ---> TLB --->(hit)  s/m memory
+                      ------>(miss) page tables ---> s/m memory
+
+- page tables are unique to a process?
+
+
+
+
+In case of huge pages - 2M page,
+
+ pmd_t points to user data huge page
+
+- _PAGE_PSE flag set in pmd_t (x86)
+
+
+In case of huge pages - 1G page,
+
+pud_t points to user data huge page
+
+
+
+
+q) What kind of applications require huge pages/ when is it needed?
+eg: JVM Oracle.
+
+q) Can the usage be dynamic? Does kernel switch from normal page --> huge page during execution? when is the decision made?
+
+
+- Kernel uses huge page tables - executable instruction.
+
+Huge Page APIs in kernel:
+Transparent Huge Pages (THP) - transparent to the application - kernel decides
+Hugetlbfs - requires application modification - sysadmin intervention/setup
+
+
+THP
+----
+ - used for anonymous memory
+ - can be used in tmpfs
+ - limited support for file mapping(XFS, experimental)
+
+THP application use madvise().
+ Use flags:
+  MADV_HUGEPAGE -
+  MADV_NOHUGEPAGE -
+
+
+Hugetlbfs
+----------
+- requires application modification
+
+q) Is the huge page size controlled by sysadmin/application?
+- YES
+
+q) Can we use hugepages of multiple sizes at the same time ? Like, 2 different applications using 2 different size of huge pages?
+
+q) Do huge pages work in containers?
+
+q) Any max size limit as percentage of RAM size?
+
+
+- Huge pages are not swappable or reclaimable.
+
+- PMD sharing:
+ - Processes can share PMD pages in their page table.
+  - only on x86 and arm64
+ - SHARED Hugetlb mappings

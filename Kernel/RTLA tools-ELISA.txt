@@ -1,0 +1,30 @@
+RTLA
+-------
+
+SCHED_DEADLINE
+
+Problem - the way we show the timing properties
+
+Blackbox testing:
+event driven:cyclictest
+polling: sysjitter/oslat
+
+
+kernel tracers
+--------------
+
+1) osnoise tracer -
+
+2) timerlat
+
+
+
+
+RTLA: a new approach
+-----------------
+rtla - user-space tool
+ - for setup, tracing and data analysis
+
+
+
+$ timerlat top -a 50

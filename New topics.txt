@@ -1,0 +1,183 @@
+KFENCE
+----------
+
+- Kernel Electric-Fence (KFENCE) is a low-overhead sampling-based memory safety error detector.
+- KFENCE detects heap out-of-bounds access, use-after-free, and invalid-free errors.
+
+- designed to be enabled in production kernels, and has near zero performance overhead.
+- Compared to KASAN, KFENCE trades performance for precision.
+
+- The main motivation behind KFENCE’s design, is that with enough total uptime KFENCE will detect bugs
+in code paths not typically exercised by non-production test workloads.
+
+"""
+CONFIG_KFENCE=y
+CONFIG_KFENCE_SAMPLE_INTERVAL=0
+"""
+
+- The most important parameter is KFENCE’s sample interval, which can be set via the kernel boot parameter
+"kfence.sample_interval" in milliseconds.
+- The sample interval determines the frequency with which heap allocations will be guarded by KFENCE.
+- The default is configurable via the Kconfig option CONFIG_KFENCE_SAMPLE_INTERVAL.
+- Setting kfence.sample_interval=0 disables KFENCE.
+
+- The KFENCE memory pool is of fixed size, and if the pool is exhausted, no further KFENCE allocations occur.
+- With CONFIG_KFENCE_NUM_OBJECTS (default 255), the number of available guarded objects can be controlled.
+- Each object requires 2 pages, one for the object itself and the other one used as a guard page;
+object pages are interleaved with guard pages, and every object page is therefore surrounded by two guard pages.
+
+- The total memory dedicated to the KFENCE memory pool can be computed as:
+"""
+( #objects + 1 ) * 2 * PAGE_SIZE
+"""
+- Using the default config, and assuming a page size of 4 KiB, results in dedicating 2 MiB to the KFENCE memory pool.
+
+- Sample output:
+"""
+==================================================================
+BUG: KFENCE: out-of-bounds read in test_out_of_bounds_read+0xa6/0x234
+
+Out-of-bounds read at 0xffff8c3f2e291fff (1B left of kfence-#72):
+ test_out_of_bounds_read+0xa6/0x234
+ kunit_try_run_case+0x61/0xa0
+ kunit_generic_run_threadfn_adapter+0x16/0x30
+ kthread+0x176/0x1b0
+ ret_from_fork+0x22/0x30
+
+kfence-#72: 0xffff8c3f2e292000-0xffff8c3f2e29201f, size=32, cache=kmalloc-32
+
+allocated by task 484 on cpu 0 at 32.919330s:
+ test_alloc+0xfe/0x738
+ test_out_of_bounds_read+0x9b/0x234
+ kunit_try_run_case+0x61/0xa0
+ kunit_generic_run_threadfn_adapter+0x16/0x30
+ kthread+0x176/0x1b0
+ ret_from_fork+0x22/0x30
+
+CPU: 0 PID: 484 Comm: kunit_try_catch Not tainted 5.13.0-rc3+ #7
+Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS 1.14.0-2 04/01/2014
+==================================================================
+"""
+
+- out-of-bounds
+- use-after-free
+- invalid free
+- memory corruption
+
+- KFENCE also uses pattern-based redzones on the other side of an object’s guard page,
+to detect out-of-bounds writes on the unprotected side of the object.
+
+- Some debugging information is exposed via debugfs:
+  The file /sys/kernel/debug/kfence/stats provides runtime statistics.
+  The file /sys/kernel/debug/kfence/objects provides a list of objects allocated via KFENCE, including those already freed but protected.
+
+- Guarded allocations are set up based on the sample interval.
+- After expiration of the sample interval, the next allocation through the main allocator (SLAB or SLUB)
+returns a guarded allocation from the KFENCE object pool (allocation sizes up to PAGE_SIZE are supported).
+
+
+KUNIT
+-------
+- KUnit provides facilities for defining unit test cases, grouping related test cases into test suites,
+providing common infrastructure for running tests, and much more.
+
+- KUnit consists of a kernel component, which provides a set of macros for easily writing unit tests.
+Tests written against KUnit will run on kernel boot if built-in, or when loaded if built as a module.
+These tests write out results to the kernel log in TAP format.
+
+- To make running these tests (and reading the results) easier, KUnit offers kunit_tool,
+which builds a User Mode Linux kernel, runs it, and parses the test results.
+This provides a quick way of running KUnit tests during development, without requiring a virtual machine or separate hardware.
+
+wrapper - ./tools/testing/kunit/kunit.py
+
+- kunit_tool will ensure that all config options set in .kunitconfig are set in the kernel .config before running the tests.
+It’ll warn you if you haven’t included the dependencies of the options you’re using.
+
+
+run - ./tools/testing/kunit/kunit.py run (UML)
+"""
+Generating .config ...
+Building KUnit Kernel ...
+Starting KUnit Kernel ...
+"""
+
+- KUnit can be included in any kernel, and the results read out and parsed manually.
+
+- Unit tests should be written for all the publicly exposed functions in a compilation unit;
+so that is all the functions that are exported in either a class (defined below) or all functions which are not static.
+
+- A test case is a function with the signature void (*)(struct kunit *test).
+It calls a function to be tested and then sets expectations for what should happen.
+"""
+void example_test_success(struct kunit *test)
+{
+}
+
+void example_test_failure(struct kunit *test)
+{
+        KUNIT_FAIL(test, "This test never passes.");
+}
+"""
+
+- An expectation is a way to specify that you expect a piece of code to do something in a test.
+An expectation is called like a function.
+A test is made by setting expectations about the behavior of a piece of code under test;
+when one or more of the expectations fail, the test case fails and information about the failure is logged.
+"""
+void add_test_basic(struct kunit *test)
+{
+        KUNIT_EXPECT_EQ(test, 1, add(1, 0));
+        KUNIT_EXPECT_EQ(test, 2, add(1, 1));
+}
+"""
+- In the above example add_test_basic makes a number of assertions about the behavior of a function called add;
+the first parameter is always of type "struct kunit *", which contains information about the current test context;
+the second parameter, in this case, is what the value is expected to be;
+the last value is what the value actually is.
+If add passes all of these expectations, the test case, add_test_basic will pass; if any one of these expectations fails,
+the test case will fail.
+
+
+- KUnit also has the concept of an assertion. An assertion is just like an expectation except the assertion immediately terminates
+the test case if it is not satisfied.
+- ASSERT_NOT_ERR_OR_NULL(…) allows us to bail out of the test case if the appropriate conditions have not been satisfied to complete the test.
+
+
+
+- KUnit provide the concept of a test suite. A test suite is just a collection of test cases for a unit of code
+with a set up function that gets invoked before every test case and then a tear down function that gets invoked
+after every test case completes.
+"""
+static struct kunit_case example_test_cases[] = {
+        KUNIT_CASE(example_test_foo),
+        KUNIT_CASE(example_test_bar),
+        KUNIT_CASE(example_test_baz),
+        {}
+};
+
+static struct kunit_suite example_test_suite = {
+        .name = "example",
+        .init = example_test_init,
+        .exit = example_test_exit,
+        .test_cases = example_test_cases,
+};
+kunit_test_suite(example_test_suite);
+"""
+
+- kunit_test_suite(...) is a macro which tells the linker to put the specified test suite in a special linker section
+so that it can be run by KUnit either after late_init, or when the test module is loaded
+(depending on whether the test was built in or not).
+
+
+- kunit_tool is a script (tools/testing/kunit/kunit.py) that aids in building the Linux kernel as UML (User Mode Linux),
+running KUnit tests, parsing the test results and displaying them in a user friendly manner.
+
+- kunit_tool addresses the problem of being able to run tests without needing a virtual machine or actual hardware with User Mode Linux.
+
+KASAN
+------
+
+
+KCSAN
+------

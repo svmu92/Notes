@@ -1,0 +1,137 @@
+
+
+Device Types
+===========
+In Linux, as with all Unix systems, devices are classified into one of three types:
+  - Block devices
+  - Character devices
+  - Network devices
+
+- Often abbreviated blkdevs, block devices are addressable in device-specified chunks called
+blocks and generally support seeking, the random access of data.
+- Example block devices
+include hard drives, Blu-ray discs, and memory devices such as flash.
+- Block devices are
+accessed via a special file called a block device node and generally mounted as a filesystem.
+
+
+- Often abbreviated cdevs, character devices are generally not addressable, providing
+access to data only as a stream, generally of characters (bytes).
+- Example character devices
+include keyboards, mice, printers, and most pseudo-devices.
+- Character devices are
+accessed via a special file called a character device node.
+- Unlike with block devices, applica-
+tions interact with character devices directly through their device node.
+
+
+- Sometimes called Ethernet devices after the most common type of network devices,
+network devices provide access to a network (such as the Internet) via a physical adapter
+(such as your laptop’s 802.11 card) and a specific protocol (such as IP).
+- Network devices are not accessed via a device node
+but with a special interface called the socket API.
+
+
+- Not all device drivers represent physical devices. Some device drivers are virtual, pro-
+viding access to kernel functionality.We call these pseudo devices;
+- some of the most common are:
+  - the kernel random number generator (accessible at /dev/random and /dev/urandom ),
+  - the null device (accessible at /dev/null ),
+  - the zero device (accessible at /dev/zero ),
+  - the full device (accessible at /dev/full ), and
+  - the memory device (accessible at /dev/mem ).
+
+
+
+
+Modules
+=======
+- Linux kernel is modular, supporting the dynamic insertion and removal of code
+from itself at runtime.
+- Related subroutines, data, and entry and exit points are grouped
+together in a single binary image, a loadable kernel object, called a module.
+
+- Support for
+modules allows systems to have only a minimal base kernel image, with optional features
+and drivers supplied via loadable, separate objects.
+- Modules also enable the removal and
+reloading of kernel code, facilitate debugging, and allow for the loading of new drivers on
+demand in response to the hot plugging of new devices.
+
+
+- The MODULE_LICENSE() macro specifies the copyright license for this file. Loading a
+non-GPL module into memory results in the tainted flag being set in the kernel.
+- the MODULE_AUTHOR() and MODULE_DESCRIPTION() macros provide, respec-
+tively, the module’s author and a brief description of the module.The value of these
+macros is entirely informational.
+
+
+- To build the module dependency information, as root simply run
+"""
+# depmod
+"""
+
+- To perform a quick update, rebuilding only the information for modules newer than
+the dependency information, run as root
+"""
+# depmod -A
+"""
+
+- The module dependency information is stored in the file - /lib/modules/version/modules.dep
+
+- The utility modprobe provides dependency
+resolution, error checking and reporting, configurable behavior, and more advanced fea-
+tures.
+- To insert a module into the kernel via modprobe , run as root:
+"""
+# modprobe module [ module parameters ]
+"""
+
+- The modprobe command can also be used to remove modules from the kernel.To
+remove a module, as root, run
+"""
+# modprobe –r modules
+"""
+
+
+- The option CONFIG_BROKEN_ON_SMP is used to specify a driver
+that is not SMP-safe.
+- The option CONFIG_DEBUG_KERNEL enables the selection of debugging-related options.
+
+
+
+
+
+
+
+
+
+
+
+
+
+The Device Model
+================
+- The device model provides a single mechanism for representing devices and describing
+their topology in the system.
+
+Such a system provides several benefits:
+- Minimization of code duplication
+- A mechanism for providing common facilities, such as reference counting
+- The capability to enumerate all the devices in the system, view their status, and see
+to what bus they attach
+- The capability to generate a complete and valid tree of the entire device structure
+of the system, including all buses and interconnections
+- The capability to link devices to their drivers and vice versa
+- The capability to categorize devices by their class, such as input device, without the
+need to understand the physical device topology
+- The capability to walk the tree of devices from the leaves up to the root, powering
+down devices in the correct order
+
+
+The initial motivation for the device model was this final point: providing an accurate
+device tree to facilitate power management.
+
+
+Kobjects
+--------

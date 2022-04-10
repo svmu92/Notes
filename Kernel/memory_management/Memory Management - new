@@ -1,0 +1,888 @@
+
+
+LFS - Intoduction to memory management in linux (https://www.youtube.com/watch?v=7aONIVSXiJ8&list=WL&index=32)
+---------------------------------------------
+
+- MMU takes care of physical <----> virtual translation.
+- It is part of CPU now. For ARM, it is part of licensed core
+
+- TLB - list of mappings from virtual to physical address space in hardware
+  - Also holds permission bits
+
+- fixed number of entries in TLB, varies by CPU
+
+- If address is not found in TLB or permission is not adequate, it generates a page fault.
+
+- Virtual address is split:
+    -the upper part is used for the kernel
+    -the lower part is used for the userspace
+  -on 32-bit systems, the split is at 0xC000 0000
+
+- CONFIG_PAGE_OFFSET (0xC0000 0000)
+  virtual address - 0xFFFF FFFF (4GB)
+  3G/1G split - 3G for userspace, 1G for kernel space
+    CONFIG_VMSPLIT_1G, CONFIG_VMSPLIT_2G etc
+
+
+Kernel logical addresses - normal address space of the kernel.
+  - kmalloc()
+Virtual addresses are at fixed offset from their physical addresses.
+  - virt: 0xC000 0000 ---> phys: 0x0000 0000 or base of RAM
+
+- __pa(x) - virtual to physical
+- __va(x) - physical to virtual
+
+- Kernel logical address space includes:
+  - memory allocated with kmalloc() and other allocation methods
+  - kernel stacks (per process)
+
+- Kernel logical memory can never be swapped out.
+
+- ON 32-bit systems, physical address is divided into low memory and high memory.
+- Low memory is directly mapped to kernel logical addresses. [896MB]
+- It is physically contiguous.
+
+- High memory has no logical addresses. Physical memory beyond 896MB.
+
+
+- Kernel virtual addresses are addresses in the region above the kernel logical address mapping.
+- vmalloc() area.
+- used for non-contiguous memory mappings.
+- often for large buffers
+- memory mapped I/O - map peripheral devices into kernel
+- ioremap(), kmap().
+
+
+- User virtual addresses
+- All addresses below CONFIG_PAGE_OFFSET.
+- make full use of MMU.
+- only the used portions of RAM are mapped.
+- memory is not contiguous
+- memory may be swapped out and moved.
+
+
+MMU
+- h/w component that manages virtual address mappings
+- operates on basic units of memory called pages
+- page size varies by architecture
+- some have configurable page sizes
+
+- page frame/frame refers to a page sized and page-aligned physical memory block.
+- pfn - page frame number used to refer to physical page frames
+
+- a memory mapping for a process will contain many mappings.
+- a mapping covers multiple pages.
+
+TLB holds each mapping:
+  - virtual addresses
+  - physical address
+  - permissions
+
+- mappings to virtually contiguous regions do not have to be physically contiguous.
+
+- Each process has its own set of mappings
+- same virtual address in two different processes will likely be used to map different physical addresses.
+
+
+
+Shared memory
+- simply map the same physical frame into two different processes.
+- need not be same virtual address unless pointers to values inside a shared memory region are used.
+
+- mmap() system call allows the user space process to request a specific virtual address to map the
+shared memory region.
+
+
+
+Lazy allocation
+- kernel will allocate pages requested by a process until those pages are actually used.
+- performance optimization.
+- when newly allocated memory is touched, the CPU will generate a page fault.
+- in the page fault handler, the kernel uses its page tables to determine that the mapping is valid
+yet unmapped in TLB.
+- kernel will allocate a physical page frame and update TLB with the new mapping.
+
+- for processes that are time-sensitive, pages can be pre-faulted, or simply touched,
+at the start of execution.
+  mlock()
+  mlockall()
+
+- kernel stores all the mappings in the page tables.
+  struct_mm
+  vm_area_struct
+
+- page fault handler find the appropriate mapping for the offending address in the kernel's page tables.
+- select and remove an existing TLB entry
+- create a TLB entry for the page containing the address
+- return to the user space process
+
+
+Swapping
+- The kernel at the time of page fault:
+  puts the process to sleep
+  copy the frame from the disk into an unused frame in RAM
+  fix the page table entry
+  wake up the process
+
+- MMU will use the same virtual address but physical frame the page is restored to may be different.
+
+- Once swapped out from RAM to disk, corresponding TLB entry is invalidated.
+
+
+User space
+- mmap() can be used directly to allocate and map pages.
+- brk()/sbrk() can be used to increase the heap size.
+
+- mmap() is often used for files,
+- the MAP_ANONYMOUS flag causes mmap() to allocate normal memory for the process.
+- the MAP_SHARED flag can make the allocated pages sharable with other processes.
+
+- brk()/sbrk()
+- do_brk() in mm/mmap.c
+- implemented similar to mmap().
+- small allocations use brk()
+- large allocations use mmap().
+- mallopt(3) and the M_MMAP_THRESHOLD controls the behavior
+
+
+
+Stack
+- if process accesses memory beyond stack, CPU will trigger page fault.
+
+- __do_page_fault in arch/arm/mm/fault.c
+
+
+
+
+
+Robert Love - Memory management
+===============================
+
+- Although the
+processor’s smallest addressable unit is a byte or a word, the memory management unit
+(MMU, the hardware that manages memory and performs virtual to physical address
+translations) typically deals in pages.
+
+- Most 32-bit architectures have
+4KB pages, whereas most 64-bit architectures have 8KB pages.
+
+- The kernel represents every physical page on the system with a struct page structure.
+This structure is defined in <linux/mm_types.h> .
+
+Simplified view:
+"""
+struct page {
+  unsigned long flags;
+  atomic_t _count;
+  atomic_t _mapcount;
+  unsigned long private;
+  struct address_space *mapping;
+  pgoff_t index;
+  struct list_head lru;
+  void *virtual;
+};
+
+"""
+
+- The flags field stores the status of the page. Such
+flags include whether the page is dirty or whether it is locked in memory. Bit flags repre-
+sent the various values, so at least 32 different flags are simultaneously available.The flag
+values are defined in <linux/page-flags.h> .
+
+"""
+enum pageflags {
+	PG_locked,		/* Page is locked. Don't touch. */
+	PG_referenced,
+	PG_uptodate,
+	PG_dirty,
+	PG_lru,
+	PG_active,
+  ...
+"""
+
+- The _count (_refcount now) field stores the usage count of the page—that is, how many references
+there are to this page.When this count reaches negative one, no one is using the page, and
+it becomes available for use in a new allocation.
+- Kernel code should not check this field
+directly but instead use the function page_count() , which takes a page structure as its
+sole parameter.Although internally _count is negative one when the page is free,
+page_count() returns zero to indicate free and a positive nonzero integer when the page
+is in use.
+
+"""
+static inline int page_count(struct page *page)
+{
+	return atomic_read(&compound_head(page)->_refcount);
+}
+"""
+
+
+- The virtual field is the page’s virtual address. Normally, this is simply the address of
+the page in virtual memory.
+
+- the "page" structure is associated with physi-
+cal pages, not virtual pages.
+
+- The kernel uses this structure to keep track of all the pages in the system, because the
+kernel needs to know whether a page is free (that is, if the page is not allocated). If a
+page is not free, the kernel needs to know who owns the page. Possible owners include
+user-space processes, dynamically allocated kernel data, static kernel code, the page cache,
+and so on.
+
+
+- The kernel uses the zones to
+group pages of similar properties.
+
+- Linux has four primary memory zones:
+
+  ZONE_DMA —This zone contains pages that can undergo DMA.
+
+  ZONE_DMA32 —Like ZOME_DMA , this zone contains pages that can undergo DMA.
+  Unlike ZONE_DMA , these pages are accessible only by 32-bit devices. On some archi-
+  tectures, this zone is a larger subset of memory.
+
+  ZONE_NORMAL —This zone contains normal, regularly mapped, pages.
+
+  ZONE_HIGHMEM —This zone contains “high memory,” which are pages not perma-
+  nently mapped into the kernel’s address space.
+
+- These are defined in <linux/mmzone.h> .
+"""
+enum zone_type {
+	/*
+  ...
+  #ifdef CONFIG_ZONE_DMA
+  	ZONE_DMA,
+  #endif
+  #ifdef CONFIG_ZONE_DMA32
+  	ZONE_DMA32,
+  #endif
+  ...
+  ZONE_NORMAL,
+  #ifdef CONFIG_HIGHMEM
+  ZONE_HIGHMEM,
+  #endif
+  ZONE_MOVABLE,
+  #ifdef CONFIG_ZONE_DEVICE
+  ZONE_DEVICE,
+  #endif
+  __MAX_NR_ZONES
+};
+"""
+
+- on the x86 architecture, ISA devices cannot perform
+DMA into the full 32-bit address space 1 because ISA devices can access only the first
+16MB of physical memory. Consequently, ZONE_DMA on x86 consists of all memory in the
+range 0MB–16MB.
+- What an architecture can and cannot directly
+map varies. On 32-bit x86 systems, ZONE_HIGHMEM is all memory above the physical
+896MB mark. On other architectures, ZONE_HIGHMEM is empty because all memory is
+directly mapped.The memory contained in ZONE_HIGHMEM is called high memory. The rest
+of the system’s memory is called low memory.
+- On x86, for example, ZONE_NORMAL is all physical memory from 16MB to
+896MB. On other (more fortunate) architectures, ZONE_NORMAL is all available memory.
+
+- allocations cannot cross zone boundaries.
+- if memory should get low, the kernel can dip its fingers in whatever zone is available and suitable.
+
+- x86-64 can fully map and handle 64-bits of memory.Thus, x86-64 has no ZONE_HIGHMEM
+and all physical memory is contained within ZONE_DMA and ZONE_NORMAL .
+
+- Each zone is represented by struct zone , which is defined in <linux/mmzone.h>
+"""
+struct zone {
+	/* Read-mostly fields */
+
+	/* zone watermarks, access with *_wmark_pages(zone) macros */
+	unsigned long _watermark[NR_WMARK];
+	unsigned long watermark_boost;
+
+	unsigned long nr_reserved_highatomic;
+  long lowmem_reserve[MAX_NR_ZONES];
+
+#ifdef CONFIG_NUMA
+int node;
+#endif
+...
+atomic_long_t		managed_pages;
+unsigned long		spanned_pages;
+unsigned long		present_pages;
+
+const char		*name;
+...
+/* zone flags, see below */
+unsigned long		flags;
+
+/* Primarily protects free_area */
+spinlock_t		lock;
+...
+"""
+
+- The lock field is a spin lock that protects the structure from concurrent access.
+- The "_watermark" array holds the minimum, low, and high watermarks for this zone.The
+kernel uses watermarks to set benchmarks for suitable per-zone memory consumption,
+varying its aggressiveness as the watermarks vary vis-à-vis free memory.
+- The name field is, unsurprisingly, a NULL -terminated string representing the name of
+this zone.The kernel initializes this value during boot in mm/page_alloc.c , and the three
+zones are given the names DMA, Normal, and HighMem.
+"""
+static char * const zone_names[MAX_NR_ZONES] = {
+#ifdef CONFIG_ZONE_DMA
+	 "DMA",
+#endif
+#ifdef CONFIG_ZONE_DMA32
+	 "DMA32",
+#endif
+	 "Normal",
+#ifdef CONFIG_HIGHMEM
+	 "HighMem",
+#endif
+	 "Movable",
+#ifdef CONFIG_ZONE_DEVICE
+	 "Device",
+#endif
+};
+"""
+
+
+
+- The kernel provides one low-level mechanism for requesting memory, along with sev-
+eral interfaces to access it.All these interfaces allocate memory with page-sized granular-
+ity and are declared in <linux/gfp.h> .The core function is
+"""
+struct page * alloc_pages(gfp_t gfp_mask, unsigned int order)
+"""
+- This allocates 2^order (that is, 1 << order ) contiguous physical pages and returns a
+pointer to the first page’s page structure; on error it returns NULL .
+
+- You can convert a given page to its logical
+address with the function:
+"""
+void * page_address(struct page *page)
+"""
+- This returns a pointer to the logical address where the given physical page currently
+resides.
+
+
+"""
+unsigned long __get_free_pages(gfp_t gfp_mask, unsigned int order)
+"""
+- This function works the same as alloc_pages() , except that it directly returns the
+logical address of the first requested page.
+
+- If only one page is required (order=0), use:
+"""
+struct page * alloc_page(gfp_t gfp_mask)
+unsigned long __get_free_page(gfp_t gfp_mask)
+"""
+
+
+- If you need the returned page filled with zeros, use the function:
+"""
+unsigned long get_zeroed_page(unsigned int gfp_mask);
+"""
+- This function works the same as __get_free_page() , except that the allocated page is
+then zero-filled—every bit of every byte is unset.
+
+
+
+Low-Level Page Allocation Methods
+Flag                              Description
+alloc_page(gfp_mask)              Allocates a single page and returns a pointer to its "page" structure.
+alloc_pages(gfp_mask,order)       Allocates 2 order pages and returns a pointer to the first page’s "page" structure
+__get_free_page(gfp_mask)         Allocates a single page and returns a pointer to its logical address
+__get_free_pages(gfp_mask,order)  Allocates 2 order pages and returns a pointer to the first page’s logical address
+get_zeroed_page(gfp_mask)         Allocates a single page, zero its contents and returns a pointer to its logical address
+
+
+A family of functions enables you to free allocated pages when you no longer need them:
+"""
+void __free_pages(struct page *page, unsigned int order)
+void free_pages(unsigned long addr, unsigned int order)
+void free_page(unsigned long addr)
+"""
+
+- A kernel allocation can fail, and your code must check for and handle such errors.
+
+
+
+kmalloc()
+- The kmalloc() function is
+a simple interface for obtaining kernel memory in byte-sized chunks.
+
+- The function is declared in <linux/slab.h> :
+"""
+void * kmalloc(size_t size, gfp_t flags)
+"""
+- The function returns a pointer to a region of memory that is at least size bytes in
+length.
+- The region of memory allocated is physically contiguous.
+- On error, it returns NULL .
+
+
+gfp_mask flags
+- Flags are represented by the gfp_t type, which is defined in <linux/types.h> as an unsigned int .
+"""
+typedef unsigned int __bitwise gfp_t;
+"""
+
+- The flags are broken up into three categories: action modifiers, zone modifiers, and
+types.
+- Action modifiers specify how the kernel is supposed to allocate the requested mem-
+ory. In certain situations, only certain methods can be employed to allocate memory.
+For example, interrupt handlers must instruct the kernel not to sleep (because interrupt han-
+dlers cannot reschedule) in the course of allocating memory. - GFP_ATOMIC
+- Zone modifiers specify from where to allocate memory. Zone modifiers
+specify from which of these zones to allocate.
+- Type flags specify a combination of action
+and zone modifiers as needed by a certain type of memory allocation.
+The GFP_KERNEL is a type flag, which is
+used for code in process context inside the kernel.
+
+- All the flags, the action modifiers included, are declared in <linux/gfp.h> .The file
+<linux/slab.h> includes this header, however, so you often need not include it directly.
+"""
+/* Plain integer GFP bitmasks. Do not use this directly. */
+#define ___GFP_DMA		0x01u
+#define ___GFP_HIGHMEM		0x02u
+#define ___GFP_DMA32		0x04u
+#define ___GFP_MOVABLE		0x08u
+#define ___GFP_RECLAIMABLE	0x10u
+#define ___GFP_HIGH		0x20u
+#define ___GFP_IO		0x40u
+#define ___GFP_FS		0x80u
+#define ___GFP_ZERO		0x100u
+#define ___GFP_ATOMIC		0x200u
+...
+"""
+
+
+Action Modifiers
+Flag                Description
+__GFP_WAIT          The allocator can sleep.
+__GFP_HIGH          The allocator can access emergency pools.
+__GFP_IO            The allocator can start disk I/O.
+__GFP_FS            The allocator can start filesystem I/O.
+__GFP_COLD          The allocator should use cache cold pages.
+__GFP_NOWARN        The allocator does not print failure warnings.
+__GFP_REPEAT        The allocator repeats the allocation if it fails, but the allocation can potentially fail.
+__GFP_NOFAIL        The allocator indefinitely repeats the allocation. The allocation cannot fail.
+__GFP_NORETRY       The allocator never retries if the allocation fails.
+__GFP_NOMEMALLOC    The allocator does not fall back on reserves.
+__GFP_HARDWALL      The allocator enforces “hardwall” cpuset boundaries.
+__GFP_RECLAIMABLE   The allocator marks the pages reclaimable.
+__GFP_COMP          The allocator adds compound page metadata (used internally by the hugetlb code).
+
+
+These allocations can be specified together. For example
+"""
+ptr = kmalloc(size, __GFP_WAIT | __GFP_IO | __GFP_FS);
+"""
+
+
+Zone            Modifiers
+Flag            Description
+__GFP_DMA       Allocates only from ZONE_DMA
+__GFP_DMA32     Allocates only from ZONE_DMA32
+__GFP_HIGHMEM   Allocates from ZONE_HIGHMEM or ZONE_NORMAL
+
+
+- You cannot specify __GFP_HIGHMEM to either __get_free_pages() or kmalloc() .
+Because these both return a logical address, and not a page structure, it is possible that
+these functions would allocate memory not currently mapped in the kernel’s virtual
+address space and, thus, does not have a logical address.
+- Only alloc_pages() can allocate high memory.
+
+
+- The type flags specify the required action and zone modifiers to fulfill a particular type
+of transaction.
+"""
+*/
+#define GFP_ATOMIC	(__GFP_HIGH|__GFP_ATOMIC|__GFP_KSWAPD_RECLAIM)
+#define GFP_KERNEL	(__GFP_RECLAIM | __GFP_IO | __GFP_FS)
+#define GFP_KERNEL_ACCOUNT (GFP_KERNEL | __GFP_ACCOUNT)
+#define GFP_NOWAIT	(__GFP_KSWAPD_RECLAIM)
+#define GFP_NOIO	(__GFP_RECLAIM)
+#define GFP_NOFS	(__GFP_RECLAIM | __GFP_IO)
+#define GFP_USER	(__GFP_RECLAIM | __GFP_IO | __GFP_FS | __GFP_HARDWALL)
+#define GFP_DMA		__GFP_DMA
+#define GFP_DMA32	__GFP_DMA32
+#define GFP_HIGHUSER	(GFP_USER | __GFP_HIGHMEM)
+#define GFP_HIGHUSER_MOVABLE	(GFP_HIGHUSER | __GFP_MOVABLE)
+#define GFP_TRANSHUGE_LIGHT	((GFP_HIGHUSER_MOVABLE | __GFP_COMP | \
+      __GFP_NOMEMALLOC | __GFP_NOWARN) & ~__GFP_RECLAIM)
+#define GFP_TRANSHUGE	(GFP_TRANSHUGE_LIGHT | __GFP_DIRECT_RECLAIM)
+"""
+
+
+Type Flags
+Flag              Description
+GFP_ATOMIC        The allocation is high priority and must not sleep. This is the flag to use in interrupt handlers,
+                  in bottom halves, while holding a spinlock, and in other situations where you cannot sleep.
+GFP_NOWAIT        Like GFP_ATOMIC , except that the call will not fallback on emergency memory pools. This increases
+                  the liklihood of the memory allocation failing.
+GFP_NOIO          This allocation can block, but must not initiate disk I/O. This is the
+                  flag to use in block I/O code when you cannot cause more disk
+                  I/O, which might lead to some unpleasant recursion.
+GFP_NOFS          This allocation can block and can initiate disk I/O, if it must, but it
+                  will not initiate a filesystem operation. This is the flag to use in
+                  filesystem code when you cannot start another filesystem operation.
+GFP_KERNEL        This is a normal allocation and might block. This is the flag to use
+                  in process context code when it is safe to sleep. The kernel will do
+                  whatever it has to do to obtain the memory requested by the
+                  caller. This flag should be your default choice.
+GFP_USER          This is a normal allocation and might block. This flag is used to
+                  allocate memory for user-space processes.
+GFP_HIGHUSER      This is an allocation from ZONE_HIGHMEM and might block. This
+                  flag is used to allocate memory for user-space processes.
+GFP_DMA           This is an allocation from ZONE_DMA . Device drivers that need
+                  DMA-able memory use this flag, usually in combination with one of
+                  the preceding flags.
+
+
+- The vast majority of allocations in the kernel use the GFP_KERNEL flag.The resulting allocation
+is a normal priority allocation that might sleep. Because the call can block, this flag can be
+used only from process context that can safely reschedule.
+-the GFP_KERNEL allocation can put the caller to sleep to swap inactive pages to disk, flush
+dirty pages to disk, and so on.
+
+- Because GFP_ATOMIC flag specifies a memory allocation that cannot sleep, the allocation is restrictive in the memory it can
+obtain for the caller. If no sufficiently sized contiguous chunk of memory is available, the
+kernel is not likely to free memory because it cannot put the caller to sleep.
+
+- GFP_NOIO and GFP_NOFS .Allocations initiated with
+these flags might block, but they refrain from performing certain other operations.A
+GFP_NOIO allocation does not initiate any disk I/O whatsoever to fulfill the request. On
+the other hand, GFP_NOFS might initiate disk I/O, but does not initiate filesystem I/O.
+
+- The GFP_DMA flag is used to specify that the allocator must satisfy the request from
+ZONE_DMA .This flag is used by device drivers, which need DMA-able memory for their
+devices. Normally, you combine this flag with the GFP_ATOMIC or GFP_KERNEL flag.
+
+
+Which Flag to Use When
+
+Situation                             Solution
+Process context, can sleep            Use GFP_KERNEL .
+Process context, cannot sleep         Use GFP_ATOMIC , or perform your allocations with
+                                      GFP_KERNEL at an earlier or later point when you can sleep.
+Interrupt handler                     Use GFP_ATOMIC .
+Softirq                               Use GFP_ATOMIC .
+Tasklet                               Use GFP_ATOMIC .
+Need DMA-able memory, can sleep       Use (GFP_DMA | GFP_KERNEL) .
+Need DMA-able memory, cannot sleep    Use (GFP_DMA | GFP_ATOMIC) , or perform your
+                                      allocation at an earlier point when you can sleep.
+
+
+
+kfree()
+- The counterpart to kmalloc() is kfree() , which is declared in <linux/slab.h> :
+"""
+void kfree(const void *ptr);
+"""
+- The kfree() method frees a block of memory previously allocated with kmalloc().
+- Do not call this function on memory not previously allocated with kmalloc(), or on
+memory that has already been freed. Doing so is a bug, resulting in bad behavior such as
+freeing memory belonging to another part of the kernel.
+
+
+
+
+vmalloc()
+- it allocates memory that is only virtually contiguous and not necessarily physically contiguous.
+- It does this by allocating potentially noncontiguous chunks of physical memory and “fixing up” the page
+tables to map the memory into a contiguous chunk of the logical address space.
+
+- The vmalloc() function, to make nonphysically contiguous pages con-
+tiguous in the virtual address space, must specifically set up the page table entries.
+- pages obtained via vmalloc() must be mapped by their individual pages (because they
+are not physically contiguous), which results in much greater TLB thrashing than you see
+when directly mapped memory is used.
+- Because of these concerns, vmalloc() is used
+only when absolutely necessary—typically, to obtain large regions of memory.
+- For example, when modules are dynamically inserted into the kernel, they are loaded into memory
+created via vmalloc() .
+
+- The vmalloc() function is declared in <linux/vmalloc.h> and defined in
+mm/vmalloc.c . Usage is identical to user-space’s malloc():
+"""
+void * vmalloc(unsigned long size);
+"""
+- The function returns a pointer to at least size bytes of virtually contiguous memory.
+- On error, the function returns NULL.
+- The function might sleep and thus cannot be called
+from interrupt context or other situations in which blocking is not permissible.
+
+
+To free an allocation obtained via vmalloc() , use:
+"""
+void vfree(const void *addr);
+"""
+- This function frees the block of memory beginning at addr that was previously allo-
+cated via vmalloc().
+- The function can also sleep and, thus, cannot be called from interrupt context.
+- It has no return value.
+
+
+
+Slab layer(separate)
+
+
+
+Statically allocating on the stack
+- the kernel’s stack is small and fixed.
+- each process is given a small, fixed stack, memory consumption is minimized, and the kernel need not burden itself with
+stack management code.
+-The size of the per-process kernel stacks depends on both the architecture and a com-
+pile-time option. Historically, the kernel stack has been two pages per process.This is usu-
+ally 8KB for 32-bit architectures and 16KB for 64-bit architectures because they usually
+have 4KB and 8KB pages, respectively.
+
+Single-page kernel stacks
+- When enabled, each process is given only a single page—4KB on 32-bit
+architectures and 8KB on 64-bit architectures.
+- This was done for two reasons.
+    - First, it results in a page with less memory consumption per process.
+    - Second and most important is that as uptime increases, it becomes increasingly hard to find two physically contiguous
+    unallocated pages. Physical memory becomes fragmented, and the resulting VM pressure
+    from allocating a single new process is expensive.
+
+Interrupt stacks
+- the kernel developers implemented a new feature: interrupt
+stacks. Interrupt stacks provide a single per-processor stack used for interrupt handlers.
+- With this option, interrupt handlers no longer share the kernel stack of the interrupted
+process. Instead, they use their own stacks.This consumes only a single page per processor.
+
+
+- When the stack overflows, the excess data simply spills into whatever exists at
+the tail end of the stack.The first thing to eat it is the "thread_info" structure
+as it is allocated at the end of each process’s kernel stack.
+
+
+
+
+High Memory mappings
+- pages in high memory might not be permanently mapped into the kernel’s
+address space.
+
+- On the x86 architecture, all physical memory beyond the 896MB mark is high mem-
+ory and is not permanently or automatically mapped into the kernel’s address space,
+despite x86 processors being capable of physically addressing up to 4GB (64GB with
+PAE 6 ) of physical RAM.
+
+Note:
+PAE stands for Physical Address Extension. It is a feature of x86 processors that enables them to
+physically address 36 bits (64GB) worth of memory, despite having only a 32-bit virtual address space.
+
+- After they are allocated, these pages must be mapped into the kernel’s logical address space.
+- On x86, pages in high memory are mapped somewhere between the 3GB and 4GB mark (of virtual address).
+
+
+- To map a given page structure into the kernel’s address space, use this function, declared
+in <linux/highmem.h> :
+"""
+void *kmap(struct page *page)
+"""
+- This function works on either high or low memory.
+- If the page structure belongs to a
+page in low memory, the page’s virtual address is simply returned.
+- If the page resides in high memory, a permanent mapping is created
+and the address is returned.The function may sleep, so kmap() works only in process context.
+
+"""
+static inline void *kmap(struct page *page)
+{
+        void *addr;
+
+        might_sleep();
+        if (!PageHighMem(page))
+                addr = page_address(page);
+        else
+                addr = kmap_high(page);
+        kmap_flush_tlb((unsigned long)addr);
+        return addr;
+}
+"""
+
+
+-For unmapping high memory, use:
+"""
+void kunmap(struct page *page)
+"""
+
+"""
+static inline void kunmap(struct page *page)
+{
+        might_sleep();
+        if (!PageHighMem(page))
+                return;
+        kunmap_high(page);
+}
+"""
+
+
+
+Temporary mappings
+- when a mapping must be created but the current context cannot sleep, the ker-
+nel provides temporary mappings (which are also called atomic mappings).
+- These are a set of reserved mappings that can hold a temporary mapping.
+- The kernel can atomically map a high memory page into one of these reserved mappings.
+- Setting up a temporary mapping is done via
+"""
+void *kmap_atomic(struct page *page);
+"""
+
+"""
+static inline void *kmap_atomic(struct page *page)
+{
+	preempt_disable();
+	pagefault_disable();
+	return page_address(page);
+}
+"""
+- This function does not block and thus can be used in interrupt context and other
+places that cannot reschedule.
+- It also disables kernel preemption, which is needed because
+the mappings are unique to each processor. (And a reschedule might change which task is
+running on which processor.)
+
+
+- The mapping is undone via
+"""
+static inline void kunmap_atomic_high(void *addr);
+"""
+- This function also does not block.
+- In many architectures it does not do anything at all
+except enable kernel preemption, because a temporary mapping is valid only until the
+next temporary mapping.
+"""
+static inline void kunmap_atomic_high(void *addr)
+{
+	/*
+	 * Mostly nothing to do in the CONFIG_HIGHMEM=n case as kunmap_atomic()
+	 * handles re-enabling faults + preemption
+	 */
+#ifdef ARCH_HAS_FLUSH_ON_KUNMAP
+	kunmap_flush_on_unmap(addr);
+#endif
+}
+"""
+
+
+
+Per-CPU allocations
+- Typically, per-CPU data is stored in an array.
+"""
+    cpu = get_cpu();    /* get current processor and disable kernel preemption */
+    my_percpu[cpu]++;   /* ... or whatever */
+    printk(“my_percpu on cpu=%d is %lu\n”, cpu, my_percpu[cpu]);
+    put_cpu();        /* enable kernel preemption */
+"""
+- the call get_cpu() , on top of returning
+the current processor number, also disables kernel preemption.
+- The corresponding call to put_cpu() enables kernel preemption.
+
+- The 2.6 kernel introduced a new interface, known as percpu, for creating and manipulat-
+ing per-CPU data.
+
+- The header <linux/percpu.h> declares all the routines.You can find the actual defini-
+tions there, in mm/slab.c , and in <asm/percpu.h> .
+- Defining a per-CPU variable at compile time is quite easy:
+"""
+DEFINE_PER_CPU(type, name);
+"""
+This creates an instance of a variable of type type , named name , for each processor on
+the system.
+
+- If you need a declaration of the variable elsewhere
+"""
+DECLARE_PER_CPU(type, name);
+"""
+
+
+- You can manipulate the variables with the get_cpu_var() and put_cpu_var() rou-
+tines.
+- A call to get_cpu_var() returns an lvalue for the given variable on the current
+processor.
+- It also disables preemption, which put_cpu_var() correspondingly enables.
+- You can obtain the value of another processor’s per-CPU data, too:
+"""
+per_cpu(name, cpu)
+"""
+- per_cpu() neither disables kernel
+preemption nor provides any sort of locking mechanism.The lockless nature of per-CPU
+data exists only if the current processor is the only manipulator of the data.
+
+- the linker actually creates per-CPU data in a unique executable section - .data.percpu
+- they do not work for modules.
+
+
+- The kernel implements a dynamic allocator, for creating per-CPU data.
+- This routine creates an instance of the requested memory for each processor on the
+systems.
+- The prototypes are in <linux/percpu.h> :
+"""
+extern void __percpu *__alloc_percpu_gfp(size_t size, size_t align, gfp_t gfp);
+extern void __percpu *__alloc_percpu(size_t size, size_t align);
+extern void free_percpu(void __percpu *__pdata);
+extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
+
+#define alloc_percpu_gfp(type, gfp)                                     \
+        (typeof(type) __percpu *)__alloc_percpu_gfp(sizeof(type),       \
+                                                __alignof__(type), gfp)
+#define alloc_percpu(type)                                              \
+        (typeof(type) __percpu *)__alloc_percpu(sizeof(type),           \
+                                                __alignof__(type))
+"""
+- The alloc_percpu() macro allocates one instance of an object of the given type for
+every processor on the system.
+- It is a wrapper around __alloc_percpu() , which takes the
+actual number of bytes to allocate as a parameter and the number of bytes on which to
+align the allocation.
+- The __alignof__ construct is a gcc feature that returns the required (or recom-
+mended, in the case of weird architectures with no alignment requirements) alignment in
+bytes for a given type or lvalue.
+
+- A call to alloc_percpu() or __alloc_percpu() returns a pointer, which is used to
+indirectly reference the dynamically created per-CPU data.The kernel provides two
+macros to make this easy:
+"""
+get_cpu_var(ptr);  /* return a void pointer to this processor’s copy of ptr */
+put_cpu_var(ptr);  /* done; enable kernel preemption */
+"""
+- The get_cpu_var() macro returns a pointer to the specific instance of the current
+processor’s data. It also disables kernel preemption, which a call to put_cpu_var() then
+enables.
+
+- A corresponding call to free_percpu() frees the given data on all processors.
+
+
+Reasons for using per-CPU data
+- The first is the reduction in locking requirements.
+- Second, per-CPU data greatly reduces cache invalidation.This occurs as processors try
+to keep their caches in sync. If one processor manipulates data held in another processor’s
+cache, that processor must flush or otherwise update its cache. Constant cache invalidation
+is called "thrashing the cache" and wreaks havoc on system performance.The use of per-CPU
+data keeps cache effects to a minimum because processors ideally access only their own
+data.The percpu interface cache-aligns all data to ensure that accessing one processor’s data
+does not bring in another processor’s data on the same cache line.
+- Per-CPU data can safely be used from either interrupt or process context.
+You cannot sleep in the middle of accessing per-CPU data.
+
+
+
+Picking an allocation method
+- If you need contiguous physical pages,
+use one of the low-level page allocators or kmalloc() .
+- Specify the GFP_ATOMIC flag to perform a high priority
+allocation that will not sleep.
+- Code that can sleep, such as process context code that does not
+hold a spin lock, should use GFP_KERNEL .
+- If you want to allocate from high memory, use alloc_pages() .The alloc_pages()
+function returns a struct page and not a pointer to a logical address.
+- To obtain an actual pointer, use kmap() to map the high memory
+into the kernel’s logical address space.
+- If you do not need physically contiguous pages—only virtually contiguous—use
+vmalloc()
+- If you are creating and destroying many large data structures, consider setting up a slab
+cache.

@@ -1,0 +1,43 @@
+
+ ARM64 
+============
+- Ref - https://eastrivervillage.com/Anatomy-of-Linux-system-call-in-ARM64/
+
+- The instruction used to set a synchronous exception [used for system call mechanism] to elevate from EL0 to EL1 is svc - supervisor call. Thus an application runs in Linux should issue svc with registers set with appropriate values.
+
+- As I have mentioned already, there are multiple exceptions can be set by applications [EL0] which will be taken by Kernel [EL1]. The handlers for these exceptions are stored in a vector table. In ARMv8 the register that mentions the base address of that vector table is "VBAR_EL1" [Vector Base Address Register for EL1].
+
+- When an exception occurs, the processor must execute handler code which corresponds to the exception. The location in memory where the handler is stored is called the exception vector. In the ARM architecture, exception vectors are stored in a table, called the exception vector table. Each Exception level has its own vector table, that is, there is one for each of EL3, EL2 and EL1. The table contains instructions to be executed, rather than a set of addresses. Vectors for individual exceptions are located at fixed offsets from the beginning of the table. The virtual address of each table base is set by the Vector Based Address Registers VBAR_EL3, VBAR_EL2 and VBAR_EL1.
+
+- the exception-handlers reside in a continuous memory and each vector spans up to 32 instructions long. Based on type of the exception, the execution will start from an instruction in a particular offset from the base address VBAR_EL1.
+
+- Linux defines the vector table at "arch/arm64/kernel/entry.S "
+
+- Each ventry is 32 instructions long. As an instruction in ARMv8 is 4 bytes long, next ventry will start at +0x80 of current ventry.
+
+- And loads the vector table into VBAR_EL1 at arch/arm64/kernel/head.S
+
+- VBAR_EL1 is an system register. So it cannot be accessed directly. Special system instructions msr and mrs should be used manipulate system registers.
+"""
+
+	adr_l	x8, vectors			// load VBAR_EL1 with virtual
+	msr	vbar_el1, x8			// vector table address
+	isb
+
+"""
+
+Instruction		Description
+-----------		-----------
+adr_l x8, vector	loads the address of vector table into general purpose register X8
+msr vbar_el1, x8	moves value in X8 to system register VBAR_EL1
+isb			instruction sync barrier
+
+
+
+- From the table, we can see for AArch64 synchronous exception from lower level, the offset is +0x400. In the Linux vector definition VBAR_EL1+0x400 is el0_sync.
+
+"""
+	kernel_ventry	0, sync				// Synchronous 64-bit EL0
+"""
+
+- 

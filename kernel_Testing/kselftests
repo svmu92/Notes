@@ -1,0 +1,146 @@
+kselftest
+===========
+- testing framework available in kernel
+- Subsystems tested: cpufreq, gpio, networking, rtc, watchdog, cgroup, ftrace, futex, ipc etc
+
+- written in C and shell script
+- run in userspace
+
+- source code for kselftests: tools/testing/kselftest directory
+
+- a quick method of running tests against the kernel.
+
+- types of test:
+	1) Developer - kernel developers write their tests.
+	2) Unit - they go into each system call, different flags and try that
+	3) Regression 
+	
+- Kernel developer write their own tests and use the workflow, when they add new features, to find bugs
+
+- Kernel users - to make sure kernel is fine
+
+
+- Where are we using:
+	Zero-day
+	Linaro Test Farm
+	Kernel CI
+
+- Releases targeted:
+	Linux mainline
+	Linux stable releases
+	Linux next
+	
+- https://lkft.linaro.org/tests/
+
+- Differences between LTP and kselftest
+	1) able to develop test as we write kernel code, at the same time.
+	2) kselftest doesn't provide harness or helpers for setup, clean, common operations.
+	
+- It cannot be used for:
+	- testing specific workloads like heavy bandwidth or cpu worload runs
+	- testing specific applications like audio or media space testing
+
+- Rationale for adding tests:
+	- Its feature focused
+	- Bug fix focused
+	- Sub-system specific
+
+
+- Building Kselftest
+	$ make -C tools/testing/selftests
+
+- 70+ subsystems which are tested
+
+- Running the tests
+	$ make -C tools/testing/selftests run_tests
+	
+	For a subsystem
+	$ make -C tools/testing/selftests/<subsystem folder> run_tests
+	
+- Building and Running
+	$ make kselftest
+
+- Cross-compiling
+	$ make --silent -C ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- tools/testing/selftests
+	
+	For a subsystem:
+	$ make --silent -C ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- tools/testing/selftests/<subsystem folder>
+
+- Cleaning
+	$ make kselftest-clean
+	
+- Use --silence to silence makefile related output
+- Running as root increases coverage
+
+
+- Kselftest by default runs non-destructive tests.
+
+- To run a subset of tests, you can use TARGET variable
+	$ make TARGETS=<name of tests> kselftest
+	eg:	make TARGETS="size timers breakpoints" kselftest
+	
+
+
+Output Format
+---------------
+- kselftest output uses TAP - Test Anything Protocol - for output format
+
+- First of TAP is version
+	eg: TAP version 13
+	
+- 2nd line is the plan - tells how many tests will be run, or how many tests have run.
+	eg: 1..10 - 10 tests
+
+- 3rd line - test line
+	Each test line consists of the following elements: ok or not ok
+	
+	This is followed by a test point number. eg: ok 42
+	
+- kselftest output can be saved in a separate directory
+	$ make --silent O=/tmp/kselftestoutput kselftest
+
+
+Summary
+------------
+
+- by default, kselftest gives detailed output
+
+- supports summary options
+	$ make --silent kselftest summary=1
+	$ make --silent -C tools/testing/selftests/sync run_tests summary=1
+	
+
+Installing kselftest
+----------------
+
+	$ cd tools/testing/selftests
+	$ ./kselftest_install.sh <install location>
+
+- folder for <install location> must be created manually.
+	
+Defualt install location
+	tools/testing/selftests/ksefltest
+
+- run_kselftest.sh - script to run kselftest. provides the environment to run the test
+
+- Can create a tarball - useful for installation on externel DUT
+	$ cd tools/testing/selftests/
+	$ ./gen_kselftest_tar.sh [tar | targz | tarbz2 | tarxz]
+	
+	default is .gz
+
+
+
+kselftest-merge
+--------------
+- individual tests add config file with required dependencies
+
+- make kselftest-merge - generates kernel config to include individual test config files
+
+- If you do kselftest-merge, it takes all the config file into a single config file for kernel to build.
+	$ make kselftest-merge
+
+- It takes all the config options and enable them in .config, it will generate a config and the kernel can be built with
+all of those options enabled.
+
+

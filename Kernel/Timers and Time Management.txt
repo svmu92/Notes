@@ -1,0 +1,913 @@
+- A large number of kernel functions are time-driven.
+
+- Events that occur
+periodically—say, every 10 milliseconds—are driven by the system timer.
+
+- The system timer
+is a programmable piece of hardware that issues an interrupt at a fixed frequency.
+
+- The interrupt handler for this timer—called the timer interrupt—updates the system time and
+performs periodic work.
+
+
+- Dynamic timers, the facility used to schedule events
+that run once after a specified time has elapsed.
+- The kernel can create and destroy timers dynamically.
+
+
+
+Kernel Notion of Time
+---------------------
+- The hardware provides a system timer that the kernel uses to gauge the passing of time.
+- This system timer works off of an electronic time source, such as a digital clock or the frequency of the
+processor.
+- The system timer goes off (often called hitting or popping) at a preprogrammed
+frequency, called the "tick rate".
+
+SYSTEM TIMER FREQUENCY ----> TICK RATE
+
+- When the system timer goes off, it issues an interrupt that
+the kernel handles via a special interrupt handler.
+- Because the kernel knows the preprogrammed tick rate, it knows the time between
+any two successive timer interrupts. This period is called a "tick" and is equal to 1/(tick
+rate) seconds.
+
+TICK ----> 1/SYSTEM TIMER FREQUENCY
+
+Wall time — the actual time of day
+
+- A family of system calls provides the date and time of day to user-space.
+- The system uptime — the relative time since the system booted — is useful
+to both kernel-space and user-space.
+
+
+Some of the work executed periodically by the timer interrupt includes:
+ - Updating the system uptime
+ - Updating the time of day
+ - On an SMP system, ensuring that the scheduler runqueues are balanced and, if not,
+ balancing them
+ - Running any dynamic timers that have expired
+ - Updating resource usage and processor time statistics
+
+
+
+The Tick Rate: HZ
+=================
+- The frequency of the system timer (the tick rate) is programmed on system boot based
+on a static preprocessor define, HZ.
+- The value of HZ differs for each supported architecture.
+On some supported architectures, it even differs between machine types.
+
+- The kernel defines the value in <asm/param.h> .
+- The tick rate has a frequency of HZ hertz and a period of 1/HZ seconds.
+"""
+#ifndef HZ
+#define HZ 100
+#endif
+"""
+
+Common values - 100 (mostly), 250, 1000
+
+
+The Ideal HZ value
+------------------
+
+Increasing the tick rate means the timer interrupt runs more frequently. Consequently,
+the work it performs occurs more often.This has the following benefits:
+ - The timer interrupt has a higher resolution and, consequently, all timed events have
+ a higher resolution.
+ - The accuracy of timed events improves.
+
+Advantages of a Larger HZ:
+ - Kernel timers execute with finer resolution and increased accuracy.
+ - System calls such as poll() and select() that optionally employ a timeout value
+ execute with improved precision.
+ - Measurements, such as resource usage or the system uptime, are recorded with a
+ finer resolution.
+ - Process preemption occurs more accurately.
+
+Disadvantages with Larger HZ:
+  - A higher tick rate implies more frequent timer interrupts,
+  which implies higher overhead, because the proces-
+  sor must spend more time executing the timer interrupt handler.
+  - less processor time available for other work
+  - more frequent thrashing of the processor’s cache
+  - increas in power consumption
+
+
+Tickless OS
+------------
+- Linux kernel supports an option known as a tickless operation.
+- When a kernel is built with the CONFIG_HZ
+configuration option set, the system dynamically schedules the timer interrupt in accordance
+with pending timers.
+- Instead of firing the timer interrupt every, say, 1ms, the interrupt is dy-
+namically scheduled and rescheduled as needed.
+- reduction in overhead
+- power savings, particular on an idle system.
+
+- On a standard tick-based system, the kernel needs to service timer interrupts,
+even during idle periods. With a tickless system, moments of idleness are not interrupted by
+unnecessary time interrupts, reducing system power consumption.
+
+
+
+
+Jiffies
+=======
+- The global variable jiffies holds the number of ticks that have occurred since the sys-
+tem booted.
+- On boot, the kernel initializes the variable to zero, and it is incremented by
+one during each timer interrupt.
+- There are HZ jiffies in a second.
+- The system uptime is therefore jiffies/HZ seconds.
+- The kernel initializes jiffies to a special
+initial value, causing the variable to overflow more often, catching bugs.
+
+
+- The jiffies variable is declared in <linux/jiffies.h> as:
+"""
+extern unsigned long volatile __cacheline_aligned_in_smp __jiffy_arch_data jiffies;
+"""
+
+- The following expression converts from seconds to a unit of jiffies :
+"""
+  (seconds * HZ)
+"""
+
+- 21600000 jiffies/day (HZ=250) = 0x1499700
+- days before overflow = 0xFFFF FFFF / 0x0149 9700 = C6 = 198 days
+
+- If 64-bit, then the overflow happens only in 854015929338 days
+
+
+- A second variable is also defined in <linux/jiffies.h> :
+"""
+extern u64 __cacheline_aligned_in_smp jiffies_64;
+"""
+
+- The ld(1) script used to link the main kernel image (arch/x86/kernel/vmlinux.lds.S
+on x86) then overlays the jiffies variable over the start of the jiffies_64
+variable:
+"""
+  jiffies = jiffies_64;
+"""
+- Thus, jiffies is the lower 32 bits of the full 64-bit jiffies_64 variable.
+- Code can continue to access the jiffies variable exactly as before. Because most code uses
+jiffies simply to measure elapses in time, most code cares about only the lower 32 bits.
+
+- The time management code uses the entire 64 bits, however, and thus prevents overflow
+of the full 64-bit value.
+- The function "get_jiffies_64()"" can be used to read the full 64-bit value.
+A special function is needed because 32-bit architectures cannot atomically access both 32-bit words
+in a 64-bit value. The special function locks the jiffies count via the xtime_lock lock before reading.
+"""
+#if (BITS_PER_LONG < 64)
+u64 get_jiffies_64(void)
+{
+	unsigned int seq;
+	u64 ret;
+
+	do {
+		seq = read_seqcount_begin(&jiffies_seq);
+		ret = jiffies_64;
+	} while (read_seqcount_retry(&jiffies_seq, seq));
+	return ret;
+}
+EXPORT_SYMBOL(get_jiffies_64);
+#endif
+"""
+
+Jiffies wraparound
+------------------
+- The jiffies variable, like any C integer, experiences overflow when its value is increased
+beyond its maximum storage limit.
+- When the tick count is equal to this maximum and it is incremented, it wraps
+around to zero.
+
+- The kernel provides four macros for comparing tick counts that correctly
+handle wraparound in the tick count.They are in <linux/jiffies.h> .
+"""
+#define time_after(a,b)		\
+	(typecheck(unsigned long, a) && \
+	 typecheck(unsigned long, b) && \
+	 ((long)((b) - (a)) < 0))
+
+#define time_before(a,b)	time_after(b,a)
+
+#define time_after_eq(a,b)	\
+	(typecheck(unsigned long, a) && \
+	 typecheck(unsigned long, b) && \
+	 ((long)((a) - (b)) >= 0))
+
+#define time_before_eq(a,b)	time_after_eq(b,a)
+"""
+
+- The "time_after(a, b)" macro returns true if time "a" is after time
+"b" ; otherwise, it returns false.
+
+- The "time_before(a, b)" macro returns true if time "a" is before
+time "b" ; otherwise, it returns false.
+
+"""
+/* ... */
+if (time_before(jiffies, timeout)) {
+    /* we did not time out, good ... */
+} else {
+    /* we timed out, error ... */
+}
+"""
+
+
+Userspace HZ
+------------
+- USER_HZ , which is the HZ value that user-space expects.
+- On x86, because HZ was historically 100, USER_HZ is 100 .
+
+- The function "jiffies_to_clock_t()" , defined in "kernel/time/time.c" ,
+is then used to scale a tick count in terms of HZ to a tick count in terms of USER_HZ .
+"""
+/*
+ * Convert jiffies/jiffies_64 to clock_t and back.
+ */
+clock_t jiffies_to_clock_t(unsigned long x)
+{
+#if (TICK_NSEC % (NSEC_PER_SEC / USER_HZ)) == 0
+# if HZ < USER_HZ
+	return x * (USER_HZ / HZ);
+# else
+	return x / (HZ / USER_HZ);
+# endif
+#else
+	return div_u64((u64)x * TICK_NSEC, NSEC_PER_SEC / USER_HZ);
+#endif
+}
+EXPORT_SYMBOL(jiffies_to_clock_t);
+"""
+
+- The function "jiffies_64_to_clock_t()" is provided to convert a 64-bit
+jiffies value from HZ to USER_HZ units.
+
+- These functions are used anywhere a value in ticks-per-seconds needs to be exported
+to user-space.
+
+
+
+
+Hardware Clocks and Timers
+==========================
+
+Architectures provide two hardware devices to help with time keeping:
+  - the system timer,
+  - the real-time clock (RTC)
+
+
+RTC
+----
+- The real-time clock (RTC) provides a nonvolatile device for storing the system time.
+- backup - a small battery typically included on the system board.
+
+- On the PC architecture, the RTC and the
+CMOS are integrated, and a single battery keeps the RTC running and the BIOS settings
+preserved.
+
+- On boot, the kernel reads the RTC and uses it to initialize the wall time.
+
+
+System Timer
+------------
+- for driving an interrupt at a periodic rate.
+- Some architectures
+implement this via an electronic clock that oscillates at a programmable frequency. Other
+systems provide a decrementer:A counter is set to some initial value and decrements at a
+fixed rate until the counter reaches zero.When the counter reaches zero, an interrupt is
+triggered.
+
+- On x86, the primary system timer is the programmable interrupt timer (PIT).
+- The kernel programs the PIT on boot to drive the system timer interrupt (interrupt zero) at
+HZ frequency.
+- Other x86 time sources include the local APIC timer and the processor’s time stamp
+counter (TSC).
+
+
+
+The Timer Interrupt Handler
+---------------------------
+
+- The timer interrupt is broken into two pieces:
+    an architecture-dependent and an architecture-independent routine.
+
+- The architecture-dependent routine is registered as the interrupt handler for the sys-
+tem timer and, thus, runs when the timer interrupt hits.
+
+Most handlers perform at least the following work:
+ - Obtain the lock, which protects access to "jiffies_64" and the wall time value.
+ - Acknowledge or reset the system timer as required.
+ - Periodically save the updated wall time to the real time clock.
+ - Call the architecture-independent timer routine, "tick_periodic()".
+
+
+The architecture-independent routine, tick_periodic() , performs much more work:
+"""
+/*
+ * Periodic tick
+ */
+static void tick_periodic(int cpu)
+{
+	if (tick_do_timer_cpu == cpu) {
+		raw_spin_lock(&jiffies_lock);
+		write_seqcount_begin(&jiffies_seq);
+
+		/* Keep track of the next tick event */
+		tick_next_period = ktime_add(tick_next_period, tick_period);
+
+		do_timer(1);
+		write_seqcount_end(&jiffies_seq);
+		raw_spin_unlock(&jiffies_lock);
+		update_wall_time();
+	}
+
+	update_process_times(user_mode(get_irq_regs()));
+	profile_tick(CPU_PROFILING);
+}
+"""
+- Increment the "jiffies_64" count by one.
+- Update resource usages, such as consumed system and user time, for the currently
+running process.
+- Run any dynamic timers that have expired
+- Execute scheduler_tick()
+- Update the wall time
+- Calculate the infamous load average.
+
+
+- "do_timer()" is responsible for actually performing the increment to "jiffies_64".
+"""
+/*
+ * Must hold jiffies_lock
+ */
+void do_timer(unsigned long ticks)
+{
+	jiffies_64 += ticks;
+	calc_global_load();
+}
+"""
+
+- The function "update_wall_time()" updates the wall time in ac-
+cordance with the elapsed ticks, whereas "calc_global_load()" updates the system’s load
+average statistics.
+
+- "update_process_times()" is invoked to update
+various statistics that a tick has elapsed, noting via "user_tick" whether it occurred in
+user-space or kernel-space:
+"""
+/*
+ * Called from the timer interrupt handler to charge one tick to the current
+ * process.  user_tick is 1 if the tick is user time, 0 for system.
+ */
+void update_process_times(int user_tick)
+{
+	struct task_struct *p = current;
+
+	PRANDOM_ADD_NOISE(jiffies, user_tick, p, 0);
+
+	/* Note: this timer irq context must be accounted for as well. */
+	account_process_tick(p, user_tick);
+	run_local_timers();
+	rcu_sched_clock_irq(user_tick);
+#ifdef CONFIG_IRQ_WORK
+	if (in_irq())
+		irq_work_tick();
+#endif
+	scheduler_tick();
+	if (IS_ENABLED(CONFIG_POSIX_TIMERS))
+		run_posix_cpu_timers();
+}
+"""
+
+- The "account_process_tick()" function does the actual updating of the process’s times.
+- Next, the "run_local_timers()" function marks a softirq to handle the execution of any expired timers.
+- Finally, the "scheduler_tick()" function decrements the currently running process’s
+timeslice and sets "need_resched" if needed. On SMP machines, it also balances the per-
+processor runqueues as needed.
+
+- The "tick_periodic()" function returns to the original architecture-dependent inter-
+rupt handler, which performs any needed cleanup, releases the lock, and finally returns.
+
+- All this occurs every 1/HZ of a second.
+
+
+
+
+The Time of Day
+---------------
+- The current time of day (the wall time) is defined in kernel/time/timekeeping.c :
+"""
+struct timespec64 wall_time;
+"""
+
+The timespec data structure is defined in <linux/time.h> as:
+"""
+struct timespec {
+    __kernel_time_t tv_sec;
+    long tv_nsec;
+};
+"""
+
+- The number of seconds that have elapsed since January 1, 1970 (UTC).This date is called the epoch.
+- Most Unix systems base their notion of the current wall time as relative to this epoch.
+
+"""
+/**
+ * ktime_get_real_ts64 - Returns the time of day in a timespec64.
+ * @ts:		pointer to the timespec to be set
+ *
+ * Returns the time of day in a timespec64 (WARN if suspended).
+ */
+void ktime_get_real_ts64(struct timespec64 *ts)
+{
+	struct timekeeper *tk = &tk_core.timekeeper;
+	unsigned int seq;
+	u64 nsecs;
+
+	WARN_ON(timekeeping_suspended);
+
+	do {
+		seq = read_seqcount_begin(&tk_core.seq);
+
+		ts->tv_sec = tk->xtime_sec;
+		nsecs = timekeeping_get_ns(&tk->tkr_mono);
+
+	} while (read_seqcount_retry(&tk_core.seq, seq));
+
+	ts->tv_nsec = 0;
+	timespec64_add_ns(ts, nsecs);
+}
+EXPORT_SYMBOL(ktime_get_real_ts64);
+"""
+
+- The primary user-space interface for retrieving the wall time is "gettimeofday()",
+which is implemented as "sys_gettimeofday()" in kernel/time.c:
+"""
+SYSCALL_DEFINE2(gettimeofday, struct __kernel_old_timeval __user *, tv,
+		struct timezone __user *, tz)
+{
+	if (likely(tv != NULL)) {
+		struct timespec64 ts;
+
+		ktime_get_real_ts64(&ts);
+		if (put_user(ts.tv_sec, &tv->tv_sec) ||
+		    put_user(ts.tv_nsec / 1000, &tv->tv_usec))
+			return -EFAULT;
+	}
+	if (unlikely(tz != NULL)) {
+		if (copy_to_user(tz, &sys_tz, sizeof(sys_tz)))
+			return -EFAULT;
+	}
+	return 0;
+}
+"""
+- If "tv" is non-NULL, "ktime_get_real_ts64()"" is called.
+- If "tz" is non- NULL, the system time zone (stored in sys_tz ) is
+returned to the user.
+- If there were errors copying the wall time or time zone back to
+user-space, the function returns -EFAULT . Otherwise, it returns zero for success.
+
+
+- The settimeofday() system call sets the wall time to the specified value. It requires
+the CAP_SYS_TIME capability.
+
+- Filesystem code, stores various timestamps (accessed, modified, and so on) in inodes.
+
+
+
+
+
+Timers
+=======
+- Timers—sometimes called dynamic timers or kernel timers—are essential for managing the
+flow of time in kernel code.
+
+- Concept - perform some initial setup, specify an expiration time, spec-
+ify a function to execute upon said expiration, and activate the timer.
+
+- Timers are not cyclic. The timer is destroyed after it expires.
+
+Using timers
+------------
+- Timers are represented by struct "timer_list", which is defined in include/linux/timer.h:
+"""
+struct timer_list {
+	/*
+	 * All fields that change during normal runtime grouped to the
+	 * same cacheline
+	 */
+	struct hlist_node	entry;
+	unsigned long		expires;
+	void			(*function)(struct timer_list *);
+	u32			flags;
+
+#ifdef CONFIG_LOCKDEP
+	struct lockdep_map	lockdep_map;
+#endif
+};
+"""
+
+- The first step in creating a timer is defining it:
+"""
+struct timer_list my_timer;
+"""
+
+- Next, the timer’s internal values must be initialized.This is done via a helper function
+and must be done prior to calling any timer management functions on the timer:
+"""
+/**
+ * timer_setup - prepare a timer for first use
+ * @timer: the timer in question
+ * @callback: the function to call when timer expires
+ * @flags: any TIMER_* flags
+ *
+ * Regular timer initialization should use either DEFINE_TIMER() above,
+ * or timer_setup(). For timers on the stack, timer_setup_on_stack() must
+ * be used and must be balanced with a call to destroy_timer_on_stack().
+ */
+#define timer_setup(timer, callback, flags)			\
+	__init_timer((timer), (callback), (flags))
+"""
+
+- Now you fill out the remaining values as required:
+"""
+my_timer.expires = jiffies + delay;
+"""
+- The my_timer.expires value specifies the timeout value in absolute ticks.
+
+- When the current jiffies count is equal to or greater than my_timer.expires, the callback func-
+tion my_timer.function is run.
+
+- Finally, you activate the timer:
+"""
+add_timer(&my_timer);
+"""
+
+- Typically, timers are run
+fairly close to their expiration; however, they might be delayed until the first timer tick af-
+ter their expiration. Consequently, timers cannot be used to implement any sort of hard
+real-time processing.
+
+
+- The kernel implements a function, mod_timer() , which changes the expiration of a given timer:
+"""
+mod_timer(&my_timer, jiffies + new_delay);  /* new expiration */
+"""
+- The mod_timer() function can operate on timers that are initialized but not active,
+too. If the timer is inactive, mod_timer() activates it.
+- The function returns zero if the
+timer were inactive and one if the timer were active.
+- In either case, upon return from
+mod_timer() , the timer is activated and set to the new expiration.
+
+- If you need to deactivate a timer prior to its expiration, use the del_timer() function:
+"""
+del_timer(&my_timer);
+"""
+- The function works on both active and inactive timers.
+- If the timer is already inactive,
+the function returns zero; otherwise, the function returns one.
+
+- Timers that have expired are automatically deactivated.
+
+- On a multiprocessing machine, however, the
+timer handler might already be executing on another processor.To deactivate the timer
+and wait until a potentially executing handler for the timer exits, use del_timer_sync() :
+"""
+del_timer_sync(&my_timer);
+"""
+- Unlike del_timer() , del_timer_sync() cannot be used from interrupt context.
+
+
+
+Timer Race conditions
+---------------------
+- Because timers run asynchronously with respect to the currently executing code, several
+potential race conditions exist.
+
+- This is unsafe on multiprocessing machines:
+"""
+del_timer(my_timer);
+my_timer->expires = jiffies + new_delay;
+add_timer(my_timer);
+"""
+
+- In almost all cases, use del_timer_sync() over del_timer().
+
+- Make sure to protect any shared data used in the timer handler func-
+tion. The kernel runs the function asynchronously with respect to other code.
+
+
+
+Timer Implementation
+--------------------
+- The kernel executes timers in bottom-half context, as softirqs, after the timer interrupt
+completes.
+- The timer interrupt handler runs update_process_times() , which calls
+run_local_timers() :
+"""
+/*
+ * Called by the local, per-CPU timer interrupt on SMP.
+ */
+void run_local_timers(void)
+{
+	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
+
+	hrtimer_run_queues();
+
+  /* Raise the softirq only if required. */
+	if (time_before(jiffies, base->next_expiry)) {
+		if (!IS_ENABLED(CONFIG_NO_HZ_COMMON))
+			return;
+
+  	/* CPU is awake, so check the deferrable base. */
+		base++;
+		if (time_before(jiffies, base->next_expiry))
+			return;
+	}
+
+  raise_softirq(TIMER_SOFTIRQ);
+}
+"""
+
+- The TIMER_SOFTIRQ softirq is handled by run_timer_softirq() .This function runs
+all the expired timers (if any) on the current processor.
+"""
+/*
+ * This function runs timers and the timer-tq in bottom half context.
+ */
+static __latent_entropy void run_timer_softirq(struct softirq_action *h)
+{
+	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
+
+	__run_timers(base);
+	if (IS_ENABLED(CONFIG_NO_HZ_COMMON))
+		__run_timers(this_cpu_ptr(&timer_bases[BASE_DEF]));
+}
+"""
+
+- Timers are stored in a linked list.
+
+- The kernel partitions timers into five groups based on their expiration value.Timers
+move down through the groups as their expiration time draws closer.The partitioning
+ensures that, in most executions of the timer softirq, the kernel has to do little work to
+find the expired timers. Consequently, the timer management code is efficient.
+
+
+
+
+
+Delaying Execution
+==================
+
+Busy looping
+-----------
+- This technique works only when the time you want to delay is some inte-
+ger multiple of the tick rate or precision is not important.
+
+- Spin in a loop until the desired number of clock ticks pass. For example:
+"""
+unsigned long timeout = jiffies + 10;   /* ten ticks */
+
+while (time_before(jiffies, timeout));
+"""
+- The loop continues until jiffies is larger than delay , which occurs only after 10
+clock ticks have passed.
+
+
+- Similarly
+"""
+unsigned long delay = jiffies + 2*HZ;     /* two seconds */
+
+while (time_before(jiffies, delay));
+"""
+
+- While your code waits, the processor
+is tied up spinning in a silly loop—no useful work is accomplished.
+- A better solution would be to reschedule your process to allow the processor to ac-
+complish other work while your code waits:
+"""
+unsigned long delay = jiffies + 5*HZ;   /* 5 seconds */
+
+while (time_before(jiffies, delay))
+    cond_resched();
+"""
+- The call to cond_resched() schedules a new process, but only if "need_resched" is set.
+- This approach invokes the scheduler, you
+cannot make use of it from an interrupt handler—only from process context.
+
+
+- "jiffies" is marked volatile so that kernel loads the new value each time loop iterates.
+- The volatile keyword
+instructs the compiler to reload the variable on each access from main memory and
+never alias the variable’s value in a register, guaranteeing that the previous loop completes
+as expected.
+
+
+
+Small delays
+-------------
+
+- For delays < 1ms, depending on system timer ticks is useless.
+- For smaller, more precise delays, the kernel provides three functions for microsecond, nanosecond,
+and millisecond delays, defined in <linux/delay.h> and <asm/delay.h >, which do not use jiffies.
+
+"""
+#ifndef mdelay
+#define mdelay(n) (\
+	(__builtin_constant_p(n) && (n)<=MAX_UDELAY_MS) ? udelay((n)*1000) : \
+	({unsigned long __ms=(n); while (__ms--) udelay(1000);}))
+#endif
+
+#ifndef ndelay
+static inline void ndelay(unsigned long x)
+{
+	udelay(DIV_ROUND_UP(x, 1000));
+}
+#define ndelay(x) ndelay(x)
+#endif
+"""
+
+"""
+#define udelay(n)							\
+	({								\
+		if (__builtin_constant_p(n)) {				\
+			if ((n) / 20000 >= 1)				\
+				 __bad_udelay();			\
+			else						\
+				__const_udelay((n) * 0x10c7ul);		\
+		} else {						\
+			__udelay(n);					\
+		}							\
+	})
+"""
+
+- The udelay() function is implemented as a loop that knows how many iterations can
+be executed in a given period of time.
+
+- For > 1ms, mdelay() must be used.
+
+- Typical uses of these busy waiting functions
+delay for a small amount of time, usually in the microsecond range.
+
+
+bogoMIPS
+--------
+- BogoMIPS calculation has little to do with the performance of your computer and is primarily
+used only for the udelay() and mdelay() functions. Its name is a contraction of bogus
+(that is, fake) and MIPS (million of instructions per second).
+
+- The BogoMIPS value is the number of busy loop iterations the processor can perform in a
+given period.
+- In effect, BogoMIPS are a measurement of how fast a processor can do noth-
+ing
+- This value is stored in the loops_per_jiffy variable and is readable from
+/proc/cpuinfo .
+- The delay loop functions use the loops_per_jiffy value to figure out
+(fairly precisely) how many busy loop iterations they need to execute to provide the requi-
+site delay.
+- The kernel computes "loops_per_jiffy" on boot via calibrate_delay() in
+init/main.c .
+
+
+
+
+schedule_timeout()
+------------------
+- optimal method of delaying execution
+- This call puts your task to sleep until at least the specified time has elapsed.
+
+- When the specified time has elapsed, the kernel wakes the task up and
+places it back on the runqueue.
+
+- Usage is easy:
+"""
+/* set task’s state to interruptible sleep */
+set_current_state(TASK_INTERRUPTIBLE);
+
+/* take a nap and wake up in “s” seconds */
+schedule_timeout(s * HZ);
+"""
+
+- The lone parameter is the desired relative timeout, in jiffies.
+- Because the task is marked TASK_INTERRUPTIBLE , it
+wakes up prematurely if it receives a signal.
+- Because schedule_timeout() invokes the scheduler, code that calls it must
+be capable of sleeping.
+
+
+schedule_timeout() Implementation
+---------------------------------
+
+"""
+/**
+ * schedule_timeout - sleep until timeout
+ * @timeout: timeout value in jiffies
+ *
+ * Make the current task sleep until @timeout jiffies have elapsed.
+ * The function behavior depends on the current task state
+ * (see also set_current_state() description):
+ *
+ * %TASK_RUNNING - the scheduler is called, but the task does not sleep
+ * at all. That happens because sched_submit_work() does nothing for
+ * tasks in %TASK_RUNNING state.
+ *
+ * %TASK_UNINTERRUPTIBLE - at least @timeout jiffies are guaranteed to
+ * pass before the routine returns unless the current task is explicitly
+ * woken up, (e.g. by wake_up_process()).
+ *
+ * %TASK_INTERRUPTIBLE - the routine may return early if a signal is
+ * delivered to the current task or the current task is explicitly woken
+ * up.
+ *
+ * The current task state is guaranteed to be %TASK_RUNNING when this
+ * routine returns.
+ *
+ * Specifying a @timeout value of %MAX_SCHEDULE_TIMEOUT will schedule
+ * the CPU away without a bound on the timeout. In this case the return
+ * value will be %MAX_SCHEDULE_TIMEOUT.
+ *
+ * Returns 0 when the timer has expired otherwise the remaining time in
+ * jiffies will be returned. In all cases the return value is guaranteed
+ * to be non-negative.
+ */
+signed long __sched schedule_timeout(signed long timeout)
+{
+	struct process_timer timer;
+	unsigned long expire;
+
+	switch (timeout)
+	{
+	case MAX_SCHEDULE_TIMEOUT:
+		/*
+		 * These two special cases are useful to be comfortable
+		 * in the caller. Nothing more. We could take
+		 * MAX_SCHEDULE_TIMEOUT from one of the negative value
+		 * but I' d like to return a valid offset (>=0) to allow
+		 * the caller to do everything it want with the retval.
+		 */
+		schedule();
+		goto out;
+	default:
+		/*
+		 * Another bit of PARANOID. Note that the retval will be
+		 * 0 since no piece of kernel is supposed to do a check
+		 * for a negative retval of schedule_timeout() (since it
+		 * should never happens anyway). You just have the printk()
+		 * that will tell you if something is gone wrong and where.
+		 */
+		if (timeout < 0) {
+			printk(KERN_ERR "schedule_timeout: wrong timeout "
+				"value %lx\n", timeout);
+			dump_stack();
+			current->state = TASK_RUNNING;
+			goto out;
+		}
+	}
+
+	expire = timeout + jiffies;
+
+	timer.task = current;
+	timer_setup_on_stack(&timer.timer, process_timeout, 0);
+	__mod_timer(&timer.timer, expire, MOD_TIMER_NOTPENDING);
+	schedule();
+	del_singleshot_timer_sync(&timer.timer);
+
+	/* Remove the timer from the object tracker */
+	destroy_timer_on_stack(&timer.timer);
+
+	timeout = expire - jiffies;
+
+ out:
+	return timeout < 0 ? 0 : timeout;
+}
+EXPORT_SYMBOL(schedule_timeout);
+"""
+
+- The function creates a timer with the original name timer and sets it to expire in
+  "timeout" clock ticks in the future.
+- It sets the timer to execute the process_timeout()
+  function when the timer expires.
+- It then enables the timer and calls schedule() .
+- Because the task is supposedly marked TASK_INTERRUPTIBLE or TASK_UNINTERRUPTIBLE , the
+scheduler does not run the task, but instead picks a new one.
+- When the timer expires, it runs process_timeout() :
+"""
+static void process_timeout(struct timer_list *t)
+{
+	struct process_timer *timeout = from_timer(timeout, t, timer);
+
+	wake_up_process(timeout->task);
+}
+"""
+- This function puts the task in the TASK_RUNNING state and places it back on the
+runqueue.
+
+- The MAX_SCHEDULE_TIMEOUT check enables a task to sleep indefi-
+nitely. In that case, no timer is set (because there is no bound on the sleep duration), and
+the scheduler is immediately invoked.

@@ -1,0 +1,142 @@
+The generic kernel object mechanism can be used to perform the following operations on objects:
+- Reference counting
+- Management of lists (sets) of objects
+- Locking of sets
+- Exporting object properties into userspace (via the sysfs filesystem)
+
+"""
+<kobject.h>
+
+struct kobject {
+	const char		*name;
+	struct list_head	entry;
+	struct kobject		*parent;
+	struct kset		*kset;
+	struct kobj_type	*ktype;
+	struct kernfs_node	*sd; /* sysfs directory entry */
+	struct kref		kref;
+#ifdef CONFIG_DEBUG_KOBJECT_RELEASE
+	struct delayed_work	release;
+#endif
+	unsigned int state_initialized:1;
+	unsigned int state_in_sysfs:1;
+	unsigned int state_add_uevent_sent:1;
+	unsigned int state_remove_uevent_sent:1;
+	unsigned int uevent_suppress:1;
+};
+"""
+
+- It is essential that kobject s are not linked with other data structures by means of
+pointers but are directly embedded. Managing the kernel object itself amounts to
+managing the whole containing object this way.
+
+- kref holds the general type struct kref designed to simplify reference management.
+
+- entry is a standard list element used to group several kobject s in a list
+
+- kset is required when an object is grouped with other objects in a set.
+
+- parent is a pointer to the parent element and enables a hierarchical structure to be established
+between kobjects.
+
+- ktype provides more detailed information on the data structure in which a kobject is
+embedded.
+
+
+The layout of the kref structure used to manage references is as follows:
+"""
+<kref.h>
+
+struct kref {
+    atomic_t refcount;
+};
+"""
+
+- refcount is an atomic data type to specify the number of positions in the kernel at which an object is
+currently being used. When the counter reaches 0, the object is no longer needed and can therefore be
+removed from memory.
+
+Function                      Meaning
+--------                      -------
+kobject_get , kobject_put     Increments or decrements the reference counter of a kobject
+
+kobject_(un)register          Registers or removes obj from a hierarchy (the object is added to the
+                              existing set (if any) of the parent element; a corresponding entry is cre-
+                              ated in the sysfs filesystem).
+
+kobject_init                  Initializes a kobject ; that is, it sets the reference counter to its initial
+                              value and initializes the list elements of the object.
+
+kobect_add                    Initializes a kernel object and makes it visible in sysfs
+
+kobject_cleanup               Releases the allocated resources when a kobject (and therefore the
+                              embedding object) is no longer needed
+
+
+- kref_init() must always be used for initialization.
+- If an object is in use, kref_get() must be invoked
+beforehand to increment the reference counter.
+- kref_put() decrements the counter when the object is no
+longer used.
+
+
+kset
+----
+- In many cases, it is necessary to group different kernel objects into a set — for instance, the set of all
+character devices or the set of all PCI-based devices.
+
+"""
+<kobject.h>
+
+/**
+ * struct kset - a set of kobjects of a specific type, belonging to a specific subsystem.
+ *
+ * A kset defines a group of kobjects.  They can be individually
+ * different "types" but overall these kobjects all want to be grouped
+ * together and operated on in the same manner.  ksets are used to
+ * define the attribute callbacks and other common events that happen to
+ * a kobject.
+ *
+ * @list: the list of all kobjects for this kset
+ * @list_lock: a lock for iterating over the kobjects
+ * @kobj: the embedded kobject for this kset (recursion, isn't it fun...)
+ * @uevent_ops: the set of uevent operations for this kset.  These are
+ * called whenever a kobject has something happen to it so that the kset
+ * can add new environment variables, or filter out the uevents if so
+ * desired.
+ */
+struct kset {
+	   struct list_head list;
+	   spinlock_t list_lock;
+	   struct kobject kobj;
+	   const struct kset_uevent_ops *uevent_ops;
+}__randomize_layout;
+"""
+
+- the kset serves as the first example for the use of kernel objects.
+
+
+kobj_type
+---------
+
+"""
+<kobject.h>
+
+struct kobj_type {
+	   void (*release)(struct kobject *kobj);
+	   const struct sysfs_ops *sysfs_ops;
+	   struct attribute **default_attrs;	/* use default_groups instead */
+	   const struct attribute_group **default_groups;
+	   const struct kobj_ns_type_operations *(*child_ns_type)(struct kobject *kobj);
+	   const void *(*namespace)(struct kobject *kobj);
+	   void (*get_ownership)(struct kobject *kobj, kuid_t *uid, kgid_t *gid);
+};
+"""
+
+- it provides an interface to the sysfs filesystem.
+
+
+
+Reference counting
+------------------
+- Reference counting is used to detect from how many places in the kernel an object is used.

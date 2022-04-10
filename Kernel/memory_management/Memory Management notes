@@ -1,0 +1,300 @@
+Address space
+--------------
+
+Physical address space - the entire range of memory accessible by processors 
+
+eg: 32 bit systems - 2^32 = 4GB
+
+This phyical address space is used by: RAM, BIOS, APIC, PCI, other memory mapped I/O Devices
+
+	0x00000000 - 0xFFFFFFFF
+
+$ sudo cat /proc/iomem - This file shows physical memory map of the system
+
+
+
+$ free -m  - can check the RAM used in a machine
+
+$ cat /proc/meminfo - another method to check RAM and usage
+
+
+
+Virtual Address Space
+----------------------
+
+- On Linux, every memory address is virtual. They do not point to any address in RAM directly.
+
+- MMU converts virtual address to physical address.
+
+- Each process owns a virtual address space
+
+- Size of virtual address space is 4GB on 32-bit systems
+
+- Virtual address space is divided into two parts,
+	user space - an area for applications
+	kernel space - an area for kernel
+
+On 32-bit systems,
+
+- The split between the two is set by a kernel configuration parameter named PAGE_OFFSET.
+
+- Usually, on older systems, its 3GB user space, 1GB kernel space - 3G/1G split.
+
+x86:
+	0x00000000 - 0xC0000000	- 	USER SPACE
+	0xC0000000 - 0xFFFFFFFF	-	KERNEL SPACE
+
+
+ARM:
+	0x00000000 - 0x80000000	- 	USER SPACE
+	0x80000000 - 0xFFFFFFFF	-	KERNEL SPACE
+
+- User space address is allocated per process, so that each process runs in a sandbox, separated from others.
+
+- Kernel space address is same for all process
+
+- Mapping the kernel's virtual address into each process virtual address space allows us to avoid the cost of switching out the memory address space on each entry to and exit from the kernel.
+
+
+64-bit memory map,
+
+x86:
+	0x0000 0000 0000 0000 - 0x0000 7FFF FFFF FFFF 	-	user-space virtual memory
+	0x0000 8000 0000 0000 - 0xFFFF 7FFF FFFF FFFF		- 	non-canonical
+	0xFFFF 8000 0000 0000 - 0xFFFF FFFF FFFF FFFF 	- 	kernel-space virtual memory
+
+
+
+Virtual address <=====> Physical address
+	#include <asm/io.h>
+	
+	phys_addr = virt_to_phys(virt_addr);
+	virt_addr = phys_to_virt(phys_addr);
+
+
+
+Pages
+========
+- Virtual address space is divided into pages of 4096 bytes.
+
+- PAGE_SIZE macro defined in kernel - usually 4096 bytes (4kB).
+
+- Pages in virtual address space are mapped to physical addresses by the MMU, which uses page tables to perform the mapping.
+
+- Page	- refer to a fixed length contiguous block of virtual memory.
+  	- represented by "struct page"
+  
+- Frame - refer to a fixed length contiguous block of physical memory
+	- OS maps a page on top of a frame
+	- Each frame has a page frame number (PFN).
+	
+	
+Page <=====> Frame
+	page_to_pfn
+	pfn_to_page
+macros
+
+
+
+<include/linux/mmtypes.h>
+struct page{
+	unsigned long flags;
+	atomic_t _count;
+	void *virtual;
+	...
+};
+
+flags: status of the page - dirty, locked in memory etc. Values in <linux/page-flags.h>
+_count: usage count of the page. How many references are to this page. When page is free, _count is -1.
+virtual: page's virtual address.
+
+
+struct page - 64 bytes - represents 4kb of virtual space.
+		For 4GB, 1048576 pages (4GB/4kB)
+		1048576 * 64 bytes = 64 MB - used to store all the pages
+	
+
+Page fault 
+-------------
+ - Kernel memory is not demand-paged, it is never paged out. 
+ - For every kmalloc() or similar function, real physical memory is reserved in RAM.
+ 
+ - For userspace, linux employs a lazy allocation strategy
+ - physical memory is mapped only when the program accesses it.
+ - a flag is set in the page table entries such that any read or write access is trapped by the kernel. This is known as page fault.
+ - the kernel attempts to find a page of physical memory and add it to the page table mapping for the process.
+ 
+ - There are major and minor page faults.
+ - Minor - the kernel just has to find a page of physical memory and map it into the process address space.
+ - Major - when the virtual memory is mapped to a file, eg. using mmap(2)
+ 
+
+
+
+$ cat /proc/self/maps/
+
+
+Low and High memory
+----------------------
+
+- Kernel code and data structures must fit into the virtual address space for kernel, but the biggest consumer is the virtual mappings of the physical memory (page tables).
+
+- Maximum amount of physical memory handled by the kernel = amount that could be mapped into the kernel's portion of virtual address space -
+								space used by the kernel code
+								
+
+- Virtual address space of kernel is divided into two parts - LOWMEM and HIGHMEM
+
+- In 3G/1G split, where kernel virtual address space is of 1 GB, LOWMEM is the first 896 MB, HIGHMEM is the top 128 MB.
+
+- LOWMEM, kernel will map 896MB permanently during boot. These addresses are called logical addresses. They are virtual addresses that can be converted to physical addresses by subtracting a fixed offset since they are always mapped and the addresses don't change.
+
+- Two macros can be used to convert these address:
+	_pa(physical_address) macro - physical to logical
+	_va(virtual_address) macro - logical to physical
+	
+- Kernel virtual address space is again divided into zones:
+	ZONE_DMA: contains page frames of memory below 16MB, reserved for DMA
+	ZONE_NORMAL: contains page frames of memory above 16MB and below 896MB, for normal use
+	ZONE_HIGHMEM: contains page frames of memory at and above 896MB
+	
+- Amount of LOWMEM and HIGHMEM can be checked using /proc/meminfo
+
+	$ cat /proc/meminfo
+	...
+	HighTotal: yyyyyy kB ----> HIGHMEM
+	LowTotal: xxxxxx KB ----> LOWMEM
+	
+- HIGMEM, top 128MB of kernel address space in 32-bit systems. It is used by the kernel to temporarily map physical memory above 1GB. The physical memory above 896MB is mapped on-demand to the 128MB of HIGHMEM region. So, HIGHMEM access is slower.
+
+- Concept of HIGHMEM doesn't exist on 64-bit systems.
+
+
+
+Memory allocaton techniques
+--------------------------------
+
+- Allocators - kmalloc, vmalloc, slab, page
+
+- Page allocator allocates 4kB chunks of memory.
+- Slab allocator allocates in chunks of 8bytes, 16bytes, 32bytes etc. Divides pages into smaller chunks as required - $ sudo cat /proc/slabinfo
+
+
+kmalloc():
+- relies on slab allocator
+- memory allocation function, similar to malloc(2) in userspace.
+- memory allocated by kmalloc is contiguous in physical memory and virtual memory
+- By default, allocation happens from LOWMEM but can be chaged to HIGHMEM by using flags.
+
+	#include<linux/slab.h>
+	void *kmalloc(size_t size, int flags);
+		size: specifies the size of the memory to be allocated (in bytes).
+		flags: determines how and where memory should be allocated.
+			Available flags are the same as the page allocator (GFP_KERNEL, GFP_ATOMIC, GFP_DMA, and so on)
+
+- On success, it returns the virtual address of the chunk allocated, which is guaranteed to be physically contiguous. 
+- On failure/error, it returns NULL.
+
+- GFP_KERNEL - allocates memory from LOWMEM. Using this may cause kmalloc to sleep, so cannot be used in interrupt context.
+- GFP_ATOMIC - guarantees atomicity of allocation. Only this flag can be used in interrupt context.
+- GFP_USER - allocates memory to user space process. 
+- GFP_HGHUSER - allocates memory from HIGHMEM
+- GFP_DMA - allocates memory from ZONE_DMA
+
+
+
+kfree():
+- used to free memory allocated by kmalloc. 
+
+	#include<linux/slab.h>
+	void kfree(const void *ptr);
+	
+- Memory corruption can happen:
+	- if block of memory is already freed.
+	- if the pointer points to an address not returned by kmalloc()
+
+
+
+Zones
+-----
+
+1. DMA: low 16MB. 
+
+2. DMA32: exist only in 64-bit linux. Low 4GB of memory.
+
+3. Normal: On 64-bit machines, from 4GB on upwards. On 32-bit machines, 16MB to 896MB.
+
+4. Highmem: exist only on 32-bit machines. RAM above 896MB.
+
+Within each zone, Linux uses a buddy-system allocator to allocate and free physical memory.
+	$ cat /proc/buddyinfo
+
+
+Buddy allocator:
+- Memory is broken up into large blocks of pages where each block is a power of two number of pages (2^order).
+- All free pages are split into 11(MAX_ORDER) lists, each contains a list of 2^order pages.
+- When allocation request is made, the buddy system looks into the appropriate list for a free block, and returns its address.
+- If free block is not available, it moves to check in the next high-order list for a larger block, which if available, it splits
+the high-order block into equal parts called buddies, returns one for allocator, and queues the second into a lower-order list.
+- When both buddy blocks become free at some future time, they are coalesced to create a larger block.
+
+
+
+kmalloc():
+- virt_to_phys will only work on addresses directly mapped or allocated via kmalloc(). It is used to translate kernel virtual address to physical address, not user virtual address.
+
+- Using kmalloc(), we can allocate only 4MB maximum in a single call. It is actually a function of page size and MAX_ORDER - buddy system freelists.
+	standard:
+		page_size = 4kb
+		MAX_ORDER = 11
+
+		#define KMALLOC_SHIFT_MAX (MAX_ORDER + PAGE_SHIFT - 1)
+		
+		11 + 12 - 1 = 22
+		
+		#define KMALLOC_MAX_SIZE (1UL << KMALLOC_SHIFT_MAX) = 2 ^ 22 = 4MB
+
+
+- The largest kmalloc size supported by the SLAB allocator is 32MB (2 ^ 25). {Max physically contiguous pages}
+
+- Memory allocated using kmalloc() must be freed using kfree()
+
+- kmalloc() may internally allocate more memory than requested. ksize() can be used to determine the actual amount of memory allocated.
+
+- kzalloc() is like kmalloc(), but zeroes the memory.
+	void *kzalloc(size_t size, gfp_t flags);
+
+- Memory allocated by kmalloc() can be resized by krealloc().
+	void *krealloc(const void *p, size_t new_size, gfp_t flags);
+
+
+
+
+vmalloc()
+- contiguous in virtual memory, not in physical memory
+- the returned memory always comes for HIGH_MEM zone for 32-bit systems.
+
+
+
+kmalloc() vs vmalloc():
+
+	1) kmalloc() guarantees the pages are physically contiguous whereas vmalloc() doesnot.
+	2) kmalloc() returns from LOW_MEM while vmalloc() returns from HIGH_MEM for 32-bit systems
+	3) Memory returned by kmalloc() can be used by devices but not the memory returned by vmalloc()
+	4) kmalloc() can be used in interrupt context with GFP_ATOMIC while vmalloc() cannot be used in interrupt context
+	5) kmalloc() uses slab allocator which in turn uses page allocator while vmalloc() directly uses page allocator
+	6) Overhead of kmalloc() is less but vmalloc() overhead is high as each allocation requires page table changes and a translation look aside buffer invalidation.
+	7) kmalloc() cannot give large memory whereas vmalloc() is useful for allocating large memory and no requirement of physical contiguous.
+	
+- We cannot use ksize() with a pointer returned by vmalloc()
+
+- vmalloc() upper limit is amount of physical RAM in the system. Theoretically, kernel reserves an architecture specific "range" of virtual memory for the purpose of vmalloc() - from VMALLOC_START to VMALLOC_END.
+
+- kmalloc(0) works. It returns a special ZERO_SIZE_PTR value. Any attempt at dereferencing it will cause page fault. kfree() can be used against it.
+
+- vmalloc(0) fails.
+
+
+
+	
+

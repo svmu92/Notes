@@ -1,0 +1,662 @@
+Page Frames
+===========
+- Page frames represent the smallest unit of system memory, and an instance of "struct page" is created for
+each page in RAM.
+- The sheer number of pages in a typical system causes even small changes in the structure to lead to a large increase in the
+amount of physical memory required to keep all page instances.
+
+- A physical page can be mapped into the virtual address space via
+page tables from multiple places, and the kernel wants to keep track of how many places map the page.
+For this end, a "counter" in "struct page" counts the number of mappings.
+
+
+"""
+<linux/mm_types.h>
+
+struct page {
+	unsigned long flags;		/* Atomic flags, some possibly
+					                 * updated asynchronously */
+	union {
+		struct {	/* Page cache and anonymous pages */
+			struct list_head lru;
+			struct address_space *mapping;
+			pgoff_t index;		/* Our offset within mapping. */
+			unsigned long private;
+		};
+		struct {	/* page_pool used by netstack */
+			unsigned long pp_magic;
+			struct page_pool *pp;
+			unsigned long _pp_mapping_pad;
+			unsigned long dma_addr;
+			union {
+				unsigned long dma_addr_upper;
+				atomic_long_t pp_frag_count;
+			};
+		};
+		struct {	/* slab, slob and slub */
+			union {
+				struct list_head slab_list;
+				struct {	/* Partial pages */
+					struct page *next;
+#ifdef CONFIG_64BIT
+					int pages;	/* Nr of pages left */
+					int pobjects;	/* Approximate count */
+#else
+					short int pages;
+					short int pobjects;
+#endif
+				};
+			};
+			struct kmem_cache *slab_cache; /* not slob */
+			/* Double-word boundary */
+			void *freelist;		/* first free object */
+			union {
+				void *s_mem;	/* slab: first object */
+				unsigned long counters;		/* SLUB */
+				struct {			/* SLUB */
+					unsigned inuse:16;
+					unsigned objects:15;
+					unsigned frozen:1;
+				};
+			};
+		};
+		struct {	/* Tail pages of compound page */
+			unsigned long compound_head;	/* Bit zero is set */
+			/* First tail page only */
+			unsigned char compound_dtor;
+			unsigned char compound_order;
+			atomic_t compound_mapcount;
+			unsigned int compound_nr; /* 1 << compound_order */
+		};
+		struct {	/* Second tail page of compound page */
+			unsigned long _compound_pad_1;	/* compound_head */
+			atomic_t hpage_pinned_refcount;
+			struct list_head deferred_list;
+		};
+		struct {	/* Page table pages */
+			unsigned long _pt_pad_1;	/* compound_head */
+			pgtable_t pmd_huge_pte; /* protected by page->ptl */
+			unsigned long _pt_pad_2;	/* mapping */
+			union {
+				struct mm_struct *pt_mm; /* x86 pgds only */
+				atomic_t pt_frag_refcount; /* powerpc */
+			};
+#if ALLOC_SPLIT_PTLOCKS
+			spinlock_t *ptl;
+#else
+			spinlock_t ptl;
+#endif
+		};
+		struct {	/* ZONE_DEVICE pages */
+			struct dev_pagemap *pgmap;
+			void *zone_device_data;
+		};
+  	struct rcu_head rcu_head;
+	};
+
+	union {		/* This union is 4 bytes in size. */
+		atomic_t _mapcount;
+		unsigned int page_type;
+		unsigned int active;		/* SLAB */
+		int units;			/* SLOB */
+	};
+
+	/* Usage count. *DO NOT USE DIRECTLY*. See page_ref.h */
+	atomic_t _refcount;
+
+#ifdef CONFIG_MEMCG
+	unsigned long memcg_data;
+#endif
+
+#if defined(WANT_PAGE_VIRTUAL)
+	void *virtual;			/* Kernel virtual address (NULL if
+					               not kmapped, ie. highmem) */
+#endif /* WANT_PAGE_VIRTUAL */
+
+#ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
+	int _last_cpupid;
+#endif
+} _struct_page_alignment;
+"""
+
+
+- The elements "slab", "freelist", and "inuse" are used by the slub allocator.
+
+- Each page frame is described by this structure in an architecture-independent format that does not
+depend on the CPU type used.
+
+- "flags" stores architecture-independent flags to describe page attributes.
+
+- "_refcount" is a usage count indicating the number of references to this page in the kernel. When its
+value reaches 0, the kernel knows that the page instance is not currently in use and can therefore
+be removed. If its value is greater than 0, the instance should on no account be removed from
+memory.
+
+- "_mapcount" indicates how many entries in the page table point to the page.
+
+- "lru" is a list head used to keep the page on various lists that allow grouping the pages into
+different categories, most importantly active and inactive pages.
+
+- The kernel allows for combining multiple adjacent pages into a larger compound page. The first
+page in the cluster is called the "compound_head" page.
+
+- "mapping" specifies the address space in which a page frame is located. "index" is the offset within
+the mapping.
+- "mapping" is able to hold not
+only a pointer, but also information on whether a page belongs to an anonymous memory area
+that is not associated with an address space. If the bit with numeric value 1 is set in mapping , the
+pointer does not point to an instance of address_space but to another data structure ("anon_vma")
+that is important in the implementation of reverse mapping for anonymous pages;
+- Double use of the pointer is possible because address_space
+instances are always aligned with sizeof(long) ; the least significant bit of a pointer to this
+instance is therefore 0 on all machines supported by Linux.
+
+- The pointer can be used directly if it points normally to an instance of "address_space" . If the trick
+involving setting the least significant bit to 1 is used, the kernel can restore the pointer by means
+of the following operation:
+"""
+struct anon_vma *page_get_anon_vma(struct page *page)
+{
+	struct anon_vma *anon_vma = NULL;
+	unsigned long anon_mapping;
+
+	rcu_read_lock();
+  [...]
+  anon_vma = (struct anon_vma *) (mapping - PAGE_MAPPING_ANON)
+  [...]
+  rcu_read_unlock();
+
+  return anon_vma;
+}
+"""
+
+
+- "private" is a pointer to ‘‘private‘‘ data ignored by virtual memory management. The pointer can
+be employed in different ways depending on page usage. It is mostly used to associate the page
+with data buffers.
+
+- "virtual" is used for pages in the highmem area, in other words, for pages that cannot be directly
+mapped into kernel memory. virtual then accepts the virtual address of the page.
+
+
+Architecture independent page flags
+----------------------------------
+
+- The different attributes of a page are described by a series of page flags stored as bits in the "flags"
+element of struct page . The flags are independent of the architecture used and cannot therefore
+provide CPU- or machine-specific information.
+- The individual flags are defined with the help of the pre-processor in "page-flags.h" , but also
+macros are generated to set, delete, and query the flags.
+"""
+enum pageflags {
+	PG_locked,		/* Page is locked. Don't touch. */
+	PG_referenced,
+	PG_uptodate,
+	PG_dirty,
+	PG_lru,
+	PG_active,
+	PG_workingset,
+  [...]
+}
+"""
+
+- "PG_locked" specifies whether a page is locked. If the bit is set, other parts of the kernel are not
+allowed to access the page. This prevents race conditions in memory management, for example,
+when reading data from hard disk into a page frame.
+
+- "PG_error" is set if an error occurs during an I/O operation involving the page.
+
+- "PG_referenced" and "PG_active" control how actively a page is used by the system. This infor-
+mation is important when the swapping subsystem has to select which page to swap out.
+
+- "PG_uptodate" indicates that the data of a page have been read without error from a block device.
+
+- "PG_dirty" is set when the contents of the page have changed as compared to the data on hard
+disk. For reasons of performance, pages are not written back immediately after each change. The
+kernel therefore uses this flag to note which pages have been changed so that they can be flushed
+later.
+Pages for which this flag has been set are referred to as dirty (generally, this means that the data
+in RAM and the data on a secondary storage medium such as a hard disk have not been synchro-
+nized).
+
+- "PG_lru" helps implement page reclaim and swapping. The kernel uses two least recently used
+lists to distinguish between active and inactive pages. The bit is set if the page is held on one
+of these lists. There is also a "PG_active" flag that is set if the page is on the list of active pages.
+
+- "PG_highmem" indicates that a page is in high memory because it cannot be mapped permanently
+into kernel memory.
+
+- "PG_private" must be set if the value of the private element in the page structure is non-NULL .
+Pages that are used for I/O use this field to subdivide the page into buffers
+but other parts of the kernel find different uses to attach private data to a
+page.
+
+- "PG_writeback" is set for pages whose contents are in the process of being written back to a block
+device.
+
+- "PG_slab" is set for pages that are part of the slab allocator.
+
+- "PG_swapcache" is set if the page is in the swap cache; in this case, private contains an entry of
+type "swap_entry_t".
+
+- Once the kernel has decided to reclaim a specific page, this is announced by setting the "PG_reclaim" flag.
+When the available amount of memory gets smaller, the kernel tries to periodically reclaim pages,
+that is, get rid of inactive, unused pages.
+
+- "PG_buddy" is set if the page is free and contained on the lists of the buddy system, that is, the core
+of the page allocation mechanism.
+
+- "PG_compound" denotes that the page is part of a larger compound page consisting of multiple
+adjacent regular pages.
+
+
+- Often it is necessary to wait until the state of a page changes, and then resume work. Two auxiliary
+functions provided by the kernel are:
+
+"""
+static inline void wait_on_page_locked(struct page *page)
+{
+	if (PageLocked(page))
+		wait_on_page_bit(compound_head(page), PG_locked);
+}
+"""
+- After calling the function, the kernel will go to sleep if the page
+is locked. Once the page becomes unlocked, the sleeper is automatically woken up and can continue
+its work.
+
+
+"""
+void wait_on_page_writeback(struct page *page)
+{
+	while (PageWriteback(page)) {
+		trace_wait_on_page_writeback(page, page_mapping(page));
+		wait_on_page_bit(page, PG_writeback);
+	}
+}
+"""
+- wait_on_page_writeback works similarly, but waits until any pending writeback operations in which
+the data contained in the page are synchronized with a block device — a hard disk, for instance — have
+been finished.
+
+
+
+
+Page Tables
+===========
+- Page tables are used to establish an association between the virtual address spaces of user
+processes and the physical memory of the system (RAM, page frames).
+
+- Page tables are used to make a uniform
+virtual address space available to each process; the applications see this space as a contiguous memory
+area. The tables also map the virtual pages used into RAM, thus supporting the implementation of shared
+memory (memory shared by several processes at the same time) and the swapping-out of pages to a block
+device to increase the effective size of usable memory without the need for additional physical RAM.
+
+- Kernel memory management assumes four-level page tables — regardless of whether this is the case
+for the underlying processor.
+
+- Page table management is split into two parts, the first architecture-dependent, the second architecture-
+independent.
+
+sizeof(void*) == sizeof(unsigned long)
+
+- Addresses in virtual memory are split into five parts as required by the structure of the four-level
+page tables (four table entries to select the page and an index to indicate the position within the page).
+
+- Not only the length but also the way in which the address is split are different on the individual
+architectures. The kernel therefore defines macros to break down the address into its individual
+components.
+
+ <--------------------------------BITS_PER_LONG--------------------------->
+ _________________________________________________________________________
+ |             |             |             |             |                |
+ |     PGD     |     PUD     |     PMD     |     PTE     |     Offset     |
+ |_____________|_____________|_____________|_____________|________________|
+
+                                                         <---Page Shift--->
+                                           <-----------PMD_SHIFT---------->
+                             <--------------------PUD_SHIFT--------------->
+               <--------------------------PGDIR_SHIFT--------------------->
+
+
+- BITS_PER_LONG specifies the number of bits used for an unsigned long variable
+and therefore also for a generic pointer to virtual address space.
+
+- At the end of each pointer there are several bits to specify the position within the selected frame page.
+The number of bits required is held in PAGE_SHIFT.
+
+- PMD_SHIFT specifies the total number of bits used by a page and by an entry in the last level of the page
+tables.
+
+- This number can be subtracted from PAGE_SHIFT to determine the number of bits required by
+an entry in the last hierarchy level of the page table.
+
+- The value indicates the size of the partial address space managed by an entry
+in the middle page table, namely, 2^PMD_SHIFT bytes.
+
+- PUD_SHIFT adds together the bit lengths of PAGE_OFFSET and PMD_SHIFT , whereas PGDIR_SHIFT combines
+the bit lengths of PAGE_OFFSET , PUD_SHIFT , and PMD_SHIFT with the bit number of an entry in the page
+middle directory. The value is the binary logarithm of the size of the partial address space that can be
+addressed via an entry in the page global directory.
+
+- The number of pointers that can be stored in the various directories of the page table is also deter-
+mined by macro definitions:
+ - PTRS_PER_PGD specifies the number of entries in the page global directory,
+   PTRS_PER_PMD the number in the page middle directory,
+   PTRS_PER_PUD the number in the page upper directory, and
+   PTRS_PER_PTE the number in the page table entry.
+
+- Architectures with two-level page tables define PTRS_PER_PMD and PTRS_PER_PUD as 1.
+- The page middle and page upper directories are effectively eliminated because they have only a
+single entry.
+
+"""
+FILE:include/asm-generic/pgtable-nopud.h
+
+/*
+ * Having the pud type consist of a p4d gets the size right, and allows
+ * us to conceptually access the p4d entry that this pud is folded into
+ * without casting.
+ */
+typedef struct { p4d_t p4d; } pud_t;
+
+#define PUD_SHIFT       P4D_SHIFT
+#define PTRS_PER_PUD    1
+#define PUD_SIZE        (1UL << PUD_SHIFT)
+#define PUD_MASK        (~(PUD_SIZE-1))
+"""
+
+"""
+FILE: include/asm-generic/pgtable-nopmd.h
+
+/*
+ * Having the pmd type consist of a pud gets the size right, and allows
+ * us to conceptually access the pud entry that this pmd is folded into
+ * without casting.
+ */
+typedef struct { pud_t pud; } pmd_t;
+
+#define PMD_SHIFT       PUD_SHIFT
+#define PTRS_PER_PMD    1
+#define PMD_SIZE        (1UL << PMD_SHIFT)
+#define PMD_MASK        (~(PMD_SIZE-1))
+"""
+
+- The size of the address area that can be addressed with pointers of n-bit length is 2^n bytes.
+- The kernel defines additional macro variables to hold the values calculated so
+that it is unnecessary to repeat the calculations time and time again.
+The variables are defined as follows:
+"""
+#define PAGE_SIZE   (1UL << PAGE_SHIFT)
+#define PUD_SIZE    (1UL << PUD_SHIFT)
+#define PMD_SIZE    (1UL << PMD_SHIFT)
+#define PGDIR_SIZE  (1UL << PGDIR_SHIFT)
+"""
+
+- The kernel also needs a means of extracting the individual components from a given address. The kernel
+uses the bitmasks defined below to do this.
+"""
+#define PAGE_MASK       (~(PAGE_SIZE-1))
+#define PUD_MASK  	    (~(PUD_SIZE-1))
+#define PMD_MASK  	    (~(PMD_SIZE-1))
+#define PGDIR_MASK		  (~(PGDIR_SIZE-1))
+"""
+- The masks are applied on a given address by simple bitwise addition.
+
+Format of Page Tables
+--------------------
+- The kernel provides four data structures (defined in page.h) to represent the entry
+structures:
+ - "pgd_t" for entries of the global directory.
+ - "pud_t" for entries of the page upper directory.
+ - "pmd_t" for entries of the page middle directory.
+ - "pte_t" for direct page table entries.
+
+- Definitions are architecture dependent (typedef struct / unsigned long )
+
+- Kernel provides below architecture dependent macros/inline functions to analyze page table entries.
+
+Convert a variable of type pte_t and so on to an unsigned long number:
+    pgd_val()
+    pud_val()
+    pmd_val()
+    pte_val()
+
+
+Do the reverse of pdg_val and so on: They convert an unsigned long number into
+a variable of type pdg_t and so on:
+    __pgd()
+    __pud()
+    __pmd()
+    __pte()
+
+
+Yield the address of the next-level table starting from a memory pointer and a
+page table entry:
+    pgd_index()
+    pud_index()
+    pmd_index()
+    pte_index()
+
+
+Check whether the _PRESENT bit of the corresponding entry is set. This is the case
+when the page or page table addressed is in RAM memory.
+    pgd_present()
+    pud_present()
+    pmd_present()
+    pte_present()
+
+
+Do the logical reverse of the xxx_present functions. If they return a true value,
+the searched page is not in RAM.
+    pgd_none()
+    pud_none()
+    pmd_none()
+    pte_none()
+
+
+Delete the passed page table entry. This is usually done by setting it to zero.
+    pgd_clear()
+    pud_clear()
+    pmd_ clear()
+    pte_clear()
+
+
+Check whether entries of the page middle, upper, and global directories are
+invalid. They are used for safety purposes in functions that receive input param-
+eters from the outside where it cannot be assumed that the parameters are valid.
+    pgd_bad
+    pud_bad
+    pmd_bad
+
+
+Return the address of the page structure holding the data on the page or the
+entries of the page middle directories.
+    pmd_page()
+    pud_page()
+    pte_page()
+
+
+
+
+"""
+pmd = pmd_offset(pud, vaddr);
+"""
+
+- PAGE_ALIGN is another standard macro that must be defined by each architecture (typically in page.h ). It
+expects an address as parameter and ‘‘rounds‘‘ the address so that it is exactly at the start of the next page.
+"""
+/* to align the pointer to the (next) page boundary */
+#define PAGE_ALIGN(addr) ALIGN(addr, PAGE_SIZE)
+"""
+
+"""
+#define ALIGN(x, a)             __ALIGN_KERNEL((x), (a))
+"""
+
+"""
+#define __ALIGN_KERNEL(x, a)            __ALIGN_KERNEL_MASK(x, (typeof(x))(a) - 1)
+#define __ALIGN_KERNEL_MASK(x, mask)    (((x) + (mask)) & ~(mask))
+"""
+
+- The alignment of addresses to page boundaries is important to ensure that best
+use is made of the cache resources of the processor.
+
+
+
+
+"""
+typedef u64 pteval_t;
+typedef u64 pmdval_t;
+typedef u64 pudval_t;
+typedef u64 p4dval_t;
+typedef u64 pgdval_t;
+
+typedef struct { pteval_t pte; } pte_t;
+typedef struct { pmdval_t pmd; } pmd_t;
+typedef struct { pudval_t pud; } pud_t;
+typedef struct { pgdval_t pgd; } pgd_t;
+typedef struct { pteval_t pgprot; } pgprot_t;
+"""
+- structs are used instead of elementary types to ensure that the contents of page table elements are
+handled only by the associated helper functions and never directly.
+
+
+Superfluous(unused for page table) bits can hold additional information (architecture dependent) such as:
+- _PAGE_PRESENT specifies whether the virtual page is present in RAM memory. This need not
+necessarily be the case because pages may be swapped out into a swap area
+
+- _PAGE_ACCESSED is set automatically by the CPU each time the page is accessed. The kernel reg-
+ularly checks the field to establish how actively the page is used (infrequently used pages are
+good swapping candidates). The bit is set after either read or write access.
+
+- _PAGE_DIRTY indicates whether the page is ‘‘dirty,’’ that is, whether the page contents have been
+modified.
+
+- _PAGE_FILE has the same numerical value as _PAGE_DIRTY , but is used in a different context,
+namely, when a page is not present in memory. Obviously, a page that is not present cannot
+be dirty, so the bit can be reinterpreted: If it is not set, then the entry points to the location of
+a swapped-out page. A set _PAGE_FILE is required for entries that belongs to
+nonlinear file mappings.
+
+- If _PAGE_USER is set, userspace code is allowed to access the page. Otherwise, only the kernel is
+allowed to do this (or when the CPU is in system mode).
+
+- _PAGE_READ , _PAGE_WRITE , and _PAGE_EXECUTE specify whether normal user processes are
+allowed to read the page, write to the page, or execute the machine code in the page.
+Pages from kernel memory must be protected against writing by user processes.
+
+
+- In x86, _PAGE_BIT_NX is used to to label the contents of a page as not executable
+"""
+#define _PAGE_BIT_NX            63      /* No execute: only valid after cpuid check */
+"""
+- It can prevent, for example, execution of code on stack pages that
+can result in security gaps in programs because of intentionally provoked buffer overflows
+if malicious code has been introduced.
+
+
+- Each architecture must provide two things to allow memory management to modify the additional bits
+in pte_t entries — the data type "__pgprot" in which the additional bits are held, and the "pte_modify()"
+function to modify the bits. The above pre-processor symbols are used to select the appropriate entry.
+
+
+
+- The kernel also defines various functions to query and set the architecture-dependent state of memory
+pages. Not all functions can be defined by all processors because of lack of hardware support for a given
+feature.
+
+- "pte_present()" checks if the page to which the page table entry points is present in memory. This
+function can, for instance, be used to detect if a page has been swapped out.
+"""
+Eg - arm64:
+#define pte_present(pte)        (!!(pte_val(pte) & (PTE_VALID | PTE_PROT_NONE)))
+"""
+
+- "pte_dirty()" checks if the page associated with the page table entry is dirty, that is, its contents
+have been modified since the kernel checked last time. Note that this function may only be called
+if "pte_present()" has ensured that the page is available.
+"""
+#define pte_hw_dirty(pte)       (pte_write(pte) && !(pte_val(pte) & PTE_RDONLY))
+#define pte_sw_dirty(pte)       (!!(pte_val(pte) & PTE_DIRTY))
+#define pte_dirty(pte)          (pte_sw_dirty(pte) || pte_hw_dirty(pte))
+"""
+
+- "pte_write()" checks if the kernel may write to the page.
+"""
+#define pte_write(pte)          (!!(pte_val(pte) & PTE_WRITE))
+"""
+
+- "pte_file()" is employed for nonlinear mappings that provide a different view on file contents by
+manipulating the page table. The function checks if a page table entry belongs to such a mapping.
+"pte_file()" may only be invoked if "pte_present" returns false ; that is, the page asso-
+ciated with the page table entry is not present in memory.
+
+
+ARM64 Examples:
+"""
+#define pmd_dirty(pmd)          pte_dirty(pmd_pte(pmd))
+#define pmd_young(pmd)          pte_young(pmd_pte(pmd))
+#define pmd_valid(pmd)          pte_valid(pmd_pte(pmd))
+#define pmd_cont(pmd)           pte_cont(pmd_pte(pmd))
+#define pmd_wrprotect(pmd)      pte_pmd(pte_wrprotect(pmd_pte(pmd)))
+#define pmd_mkold(pmd)          pte_pmd(pte_mkold(pmd_pte(pmd)))
+#define pmd_mkwrite(pmd)        pte_pmd(pte_mkwrite(pmd_pte(pmd)))
+#define pmd_mkclean(pmd)        pte_pmd(pte_mkclean(pmd_pte(pmd)))
+#define pmd_mkdirty(pmd)        pte_pmd(pte_mkdirty(pmd_pte(pmd)))
+#define pmd_mkyoung(pmd)        pte_pmd(pte_mkyoung(pmd_pte(pmd)))
+"""
+
+
+
+Creating and Manipulating entries
+---------------------------------
+
+mk_pte() - Creates a pte entry; a page instance and the desired page access permissions must
+be passed as parameters.
+
+pte_page() - Yields the address of the page instance belonging to the page described by the
+page table entry.
+"""
+#define pte_page(pte)           (pfn_to_page(pte_pfn(pte)))
+"""
+
+Reserve and initialize memory to hold a complete page table (not just a single entry):
+    pgd_alloc()
+    pud_alloc()
+    pmd_alloc()
+    pte_alloc()
+
+"""
+pgd_t *pgd_alloc(struct mm_struct *mm)
+{
+        gfp_t gfp = GFP_PGTABLE_USER;
+
+        if (PGD_SIZE == PAGE_SIZE)
+                return (pgd_t *)__get_free_page(gfp);
+        else
+                return kmem_cache_alloc(pgd_cache, gfp);
+}
+"""
+
+Free the memory occupied by the page table.
+    pgd_free()
+    pud_free()
+    pmd_free()
+    pte_free()
+
+"""
+void pgd_free(struct mm_struct *mm, pgd_t *pgd)
+{
+        if (PGD_SIZE == PAGE_SIZE)
+                free_page((unsigned long)pgd);
+        else
+                kmem_cache_free(pgd_cache, pgd);
+}
+"""
+
+Set the value of an entry in a page table.
+    set_pgd()
+    set_pud()
+    set_pmd()
+    set_pte()

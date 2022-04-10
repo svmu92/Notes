@@ -1,0 +1,16 @@
+printk(KERN_SHO "4" ....
+
+4- warning - log_level
+
+- Console LogLevels
+
+1 to 7
+-set in /proc/sys/kernel/printk
+
+-instead of printk(message_level... , we have other functions like: pr_emerg(), pr_crit(), pr_err() , pr_warning() etc, but we have to mention the following in Makefile.
+
+ccflags-y:= -DDEBUG
+
+
+
+

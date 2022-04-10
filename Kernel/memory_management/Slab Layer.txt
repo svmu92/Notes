@@ -1,0 +1,488 @@
+Slab Layer
+- A free list contains a block of available, already allocated, data structures.
+When code requires a new instance of a data structure, it can grab one of the structures
+off the free list rather than allocate the sufficient amount of memory and set it up for the
+data structure. Later, when the data structure is no longer needed, it is returned to the free
+list instead of deallocated.
+- The slab layer acts as a generic data structure-caching layer.
+
+- The slab layer attempts to leverage several basic tenets:
+  - Frequently used data structures tend to be allocated and freed often, so cache them.
+  - To prevent memory fragmentation, the cached free lists are arranged contiguously. Because freed data structures return to
+  the free list, there is no resulting fragmentation.
+  - The free list provides improved performance during frequent allocation and deallo-
+  cation because a freed object can be immediately returned to the next allocation.
+  - If the allocator is aware of concepts such as object size, page size, and total cache
+  size, it can make more intelligent decisions.
+  - If part of the cache is made per-processor (separate and unique to each processor
+  on the system), allocations and frees can be performed without an SMP lock.
+  - If the allocator is NUMA-aware, it can fulfill allocations from the same memory
+  node as the requestor.
+  - Stored objects can be colored to prevent multiple objects from mapping to the same
+  cache lines.
+
+
+- The slab layer divides different objects into groups called caches, each of which stores a
+different type of object.
+- There is one cache per object type. For example, one cache is for
+process descriptors (a free list of task_struct structures), whereas another cache is for
+inode objects ( struct inode) .
+- Interestingly, the kmalloc() interface is built on top of
+the slab layer, using a family of general purpose caches.
+- The caches are then divided into slabs (hence the name of this subsystem).
+- The slabs are composed of one or more physically contiguous pages.
+- Typically, slabs are composed of only a single page. Each cache may consist of multiple slabs.
+- Each slab contains some number of objects, which are the data structures being cached.
+- Each slab is in one of three states: full, partial, or empty.
+  A full slab has no free objects. (All objects in the slab are allocated.)
+  An empty slab has no allocated objects. (All objects in the slab are free.)
+  A partial slab has some allocated objects and some free objects.
+- When some part of the kernel requests a new object, the request is satisfied from a partial slab, if
+one exists.
+- Otherwise, the request is satisfied from an empty slab.
+- If there exists no empty slab, one is created.
+
+Example: struct inode
+- These structures are frequently created and destroyed, so it makes sense to manage them via the
+slab allocator.
+- Thus, struct inode is allocated from the "inode_cachep" cache.
+- This cache is made up of one or more slabs—probably a lot of slabs
+because there are a lot of objects.
+- Each slab contains as many struct inode objects as possible.
+- When the kernel requests a new inode structure, the kernel returns a pointer to
+an already allocated, but unused structure from a partial slab or, if there is no partial slab,
+an empty slab.
+- When the kernel is done using the inode object, the slab allocator marks
+the object as free.
+                        |---> object
+                        |---> object
+            |-----> Slab|---> object
+Cache-------|
+            |-----> Slab|---> object
+                        |---> object
+                        |---> object
+
+"""
+static struct inode *alloc_inode(struct super_block *sb)
+{
+	const struct super_operations *ops = sb->s_op;
+	struct inode *inode;
+
+	if (ops->alloc_inode)
+		inode = ops->alloc_inode(sb);
+	else
+		inode = kmem_cache_alloc(inode_cachep, GFP_KERNEL);
+    ...
+    ...
+
+void __init inode_init(void)
+{
+	/* inode slab cache */
+	inode_cachep = kmem_cache_create("inode_cache",
+					 sizeof(struct inode),
+					 0,
+					 (SLAB_RECLAIM_ACCOUNT|SLAB_PANIC|
+					 SLAB_MEM_SPREAD|SLAB_ACCOUNT),
+					 init_once);
+...
+...
+"""
+
+- Each cache is represented by a kmem_cache structure.
+- This structure contains three lists— slabs_full , slabs_partial , and slabs_empty —stored inside a kmem_list3(kmem_cache_node now)
+structure, which is defined in mm/slab.c .
+"""
+struct kmem_cache {
+        unsigned int object_size;/* The original size of the object */
+        unsigned int size;      /* The aligned/padded/added on size  */
+        unsigned int align;     /* Alignment as calculated */
+        slab_flags_t flags;     /* Active flags on the slab */
+        unsigned int useroffset;/* Usercopy region offset */
+        unsigned int usersize;  /* Usercopy region size */
+        const char *name;       /* Slab name for sysfs */
+        int refcount;           /* Use counter */
+        void (*ctor)(void *);   /* Called on object slot creation */
+        struct list_head list;  /* List of all slab caches on the system */
+};
+
+...
+...
+/*
+ * The slab lists for all objects.
+ */
+struct kmem_cache_node {
+        spinlock_t list_lock;
+
+#ifdef CONFIG_SLAB
+        struct list_head slabs_partial; /* partial list first, better asm code */
+        struct list_head slabs_full;
+        struct list_head slabs_free;
+        unsigned long total_slabs;      /* length of all slab lists */
+        unsigned long free_slabs;       /* length of free slab list only */
+        unsigned long free_objects;
+        unsigned int free_limit;
+        unsigned int colour_next;       /* Per-node cache coloring */
+...
+...
+"""
+
+- A slab descriptor, struct slab , represents each slab
+- "struct slab" is now embedded inside "struct page" as shown below:
+"""
+struct page{
+...
+        struct {        /* slab, slob and slub */
+                union {
+                        struct list_head slab_list;
+                        struct {        /* Partial pages */
+                                struct page *next;
+        #ifdef CONFIG_64BIT
+                                int pages;      /* Nr of pages left */
+                                int pobjects;   /* Approximate count */
+        #else
+                                short int pages;
+                                short int pobjects;
+        #endif
+                        };
+                };
+                struct kmem_cache *slab_cache; /* not slob */
+                /* Double-word boundary */
+                void *freelist;         /* first free object */
+                union {
+                        void *s_mem;    /* slab: first object */
+                        unsigned long counters;         /* SLUB */
+                        struct {                        /* SLUB */
+                                unsigned inuse:16;
+                                unsigned objects:15;
+                                unsigned frozen:1;
+                        };
+                };
+        };
+...
+""""
+
+- Slab descriptors are allocated either outside the slab in a general cache or inside the
+slab itself, at the beginning.
+- The descriptor is stored inside the slab if the total size of the
+slab is sufficiently small, or if internal slack space is sufficient to hold the descriptor.
+
+- The slab allocator creates new slabs by interfacing with the low-level kernel page allo-
+cator via __get_free_pages() (old method). Currently it has:
+"""
+/*
+ * Interface to system's page allocator. No need to hold the
+ * kmem_cache_node ->list_lock.
+ *
+ * If we requested dmaable memory, we will get it. Even if we
+ * did not request dmaable memory, we might get it, but that
+ * would be relatively rare and ignorable.
+ */
+static struct page *kmem_getpages(struct kmem_cache *cachep, gfp_t flags,
+                                                                int nodeid)
+{
+        struct page *page;
+
+        flags |= cachep->allocflags;
+
+        page = __alloc_pages_node(nodeid, flags, cachep->gfporder);
+        if (!page) {
+                slab_out_of_memory(cachep, flags, nodeid);
+                return NULL;
+        }
+
+        account_slab_page(page, cachep->gfporder, cachep, flags);
+        __SetPageSlab(page);
+        /* Record if ALLOC_NO_WATERMARKS was set when allocating the slab */
+        if (sk_memalloc_socks() && page_is_pfmemalloc(page))
+                SetPageSlabPfmemalloc(page);
+
+        return page;
+}
+"""
+- The first parameter to this function points to the specific cache that needs more
+pages.
+- The second parameter points to the flags given to __alloc_pages_node() .
+It is binary ORed with another value "cachep->allocflags". This adds default flags that the cache
+requires to the flags parameter.
+- The power-of-two size of the allocation is stored in "cachep->gfporder".
+
+- the allocator attempts to fulfill the allocation from the same memory node that
+requested the allocation.This provides better performance on NUMA systems, in which
+accessing memory outside your node results in a performance penalty.
+
+
+- Memory is then freed by kmem_freepages() , which calls free_pages() on the given
+cache’s pages.
+"""
+/*
+ * Interface to system's page release.
+ */
+static void kmem_freepages(struct kmem_cache *cachep, struct page *page)
+{
+        int order = cachep->gfporder;
+
+        BUG_ON(!PageSlab(page));
+        __ClearPageSlabPfmemalloc(page);
+        __ClearPageSlab(page);
+        page_mapcount_reset(page);
+        /* In union with page->mapping where page allocator expects NULL */
+        page->slab_cache = NULL;
+
+        if (current->reclaim_state)
+                current->reclaim_state->reclaimed_slab += 1 << order;
+        unaccount_slab_page(page, order, cachep);
+        __free_pages(page, order);
+}
+"""
+
+- In turn, the slab layer invokes the page allocation function only when there does
+not exist any partial or empty slabs in a given cache.
+- The freeing function is called only
+when available memory grows low and the system is attempting to free memory, or when
+a cache is explicitly destroyed.
+
+
+Slab allocator interface
+- The interface enables the creation and destruction of new
+caches and the allocation and freeing of objects within the caches.
+- The sophisticated management of caches and the slabs within is
+entirely handled by the internals of the slab layer.
+
+- A new cache is created via kmem_cache_create() in mm/slab_common.c:
+"""
+/**
+ * kmem_cache_create - Create a cache.
+ * @name: A string which is used in /proc/slabinfo to identify this cache.
+ * @size: The size of objects to be created in this cache.
+ * @align: The required alignment for the objects.
+ * @flags: SLAB flags
+ * @ctor: A constructor for the objects.
+ *
+ * Cannot be called within a interrupt, but can be interrupted.
+ * The @ctor is run when new pages are allocated by the cache.
+ *
+ * The flags are
+ *
+ * %SLAB_POISON - Poison the slab with a known test pattern (a5a5a5a5)
+ * to catch references to uninitialised memory.
+ *
+ * %SLAB_RED_ZONE - Insert `Red` zones around the allocated memory to check
+ * for buffer overruns.
+ *
+ * %SLAB_HWCACHE_ALIGN - Align the objects in this cache to a hardware
+ * cacheline.  This can be beneficial if you're counting cycles as closely
+ * as davem.
+ *
+ * Return: a pointer to the cache on success, NULL on failure.
+ */
+struct kmem_cache *
+kmem_cache_create(const char *name, unsigned int size, unsigned int align,
+                slab_flags_t flags, void (*ctor)(void *))
+{
+        return kmem_cache_create_usercopy(name, size, align, flags, 0, 0,
+                                          ctor);
+}
+EXPORT_SYMBOL(kmem_cache_create);
+"""
+
+- The first parameter is a string storing the name of the cache.
+- The second parameter is the size of each element in the cache.
+- The third parameter is the offset of the first object
+within a slab.This is done to ensure a particular alignment within the page.
+- The flags parameter specifies optional settings controlling the cache’s behavior.
+It can be zero, specifying no special behavior, or one or more of the following flags OR’ed together:
+  SLAB_HWCACHE_ALIGN - lign each object within a slab to a cache line.
+  SLAB_POISON - causes the slab layer to fill the slab with a known value (a5a5a5a5).
+  SLAB_RED_ZONE - causes the slab layer to insert “red zones” around the
+  allocated memory to help detect buffer overruns.
+  SLAB_PANIC - causes the slab layer to panic if the allocation fails.
+  SLAB_CACHE_DMA - instructs the slab layer to allocate each slab in DMA-
+  able memory.This is needed if the allocated object is used for DMA and must
+  reside in ZONE_DMA .
+- The final parameter, ctor , is a constructor for the cache.The constructor is called
+whenever new pages are added to the cache. You can pass NULL for this parameter.
+
+- On success, kmem_cache_create() returns a pointer to the created cache. Otherwise, it
+returns NULL .This function must not be called from interrupt context because it can sleep.
+
+Sample output of "cat /proc/slabinfo":
+"""
+slabinfo - version: 2.1
+# name            <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab> : tunables <limit> <batchcount> <sharedfactor> : slabdata <active_slabs> <num_slabs> <sharedavail>
+nf_conntrack         725    725    320   25    2 : tunables    0    0    0 : slabdata     29     29      0
+au_finfo               0      0    192   21    1 : tunables    0    0    0 : slabdata      0      0      0
+au_icntnr              0      0    832   19    4 : tunables    0    0    0 : slabdata      0      0      0
+...
+mnt_cache           2407   2500    320   25    2 : tunables    0    0    0 : slabdata    100    100      0
+filp               14831  16720    256   16    1 : tunables    0    0    0 : slabdata   1045   1045      0
+inode_cache        23080  25376    608   26    4 : tunables    0    0    0 : slabdata    976    976      0
+dentry            139223 201159    192   21    1 : tunables    0    0    0 : slabdata   9579   9579      0
+names_cache           32     56   4096    8    8 : tunables    0    0    0 : slabdata      7      7      0
+...
+kmalloc-8k          1174   1176   8192    4    8 : tunables    0    0    0 : slabdata    294    294      0
+kmalloc-4k          3943   4096   4096    8    8 : tunables    0    0    0 : slabdata    512    512      0
+kmalloc-2k          2863   3120   2048   16    8 : tunables    0    0    0 : slabdata    195    195      0
+kmalloc-1k          5588   6080   1024   16    4 : tunables    0    0    0 : slabdata    380    380      0
+kmalloc-512        18145  20912    512   16    2 : tunables    0    0    0 : slabdata   1307   1307      0
+kmalloc-256        10635  10832    256   16    1 : tunables    0    0    0 : slabdata    677    677      0
+kmalloc-192        19607  22302    192   21    1 : tunables    0    0    0 : slabdata   1062   1062      0
+kmalloc-128         4699   5088    128   32    1 : tunables    0    0    0 : slabdata    159    159      0
+kmalloc-96          4367   4536     96   42    1 : tunables    0    0    0 : slabdata    108    108      0
+kmalloc-64         28089  30080     64   64    1 : tunables    0    0    0 : slabdata    470    470      0
+kmalloc-32         76590  78208     32  128    1 : tunables    0    0    0 : slabdata    611    611      0
+kmalloc-16         17060  17920     16  256    1 : tunables    0    0    0 : slabdata     70     70      0
+kmalloc-8          12674  13312      8  512    1 : tunables    0    0    0 : slabdata     26     26      0
+kmem_cache_node      215    320     64   64    1 : tunables    0    0    0 : slabdata      5      5      0
+kmem_cache           183    208    256   16    1 : tunables    0    0    0 : slabdata     13     13      0
+"""
+
+
+- To destroy a cache, call,
+"""
+int kmem_cache_destroy(struct kmem_cache *cachep)
+"""
+- this function destroys the given cache.
+- It is generally invoked from module shutdown code in modules that create their own caches.
+- It must not be called from interrupt context because it may sleep.
+
+- Caller must ensure that:
+  - All slabs in the cache are empty.
+  - No one accesses the cache during (and obviously after) a call to kmem_cache_destroy().
+
+- On success, the function returns zero; it returns nonzero otherwise.
+
+
+
+
+- After a cache is created, an object is obtained from the cache via:
+"""
+void * kmem_cache_alloc(struct kmem_cache *cachep, gfp_t flags);
+"""
+
+"""
+/**
+ * kmem_cache_alloc - Allocate an object
+ * @cachep: The cache to allocate from.
+ * @flags: See kmalloc().
+ *
+ * Allocate an object from this cache.  The flags are only relevant
+ * if the cache has no available objects.
+ *
+ * Return: pointer to the new object or %NULL in case of error
+ */
+void *kmem_cache_alloc(struct kmem_cache *cachep, gfp_t flags)
+{
+        void *ret = slab_alloc(cachep, flags, cachep->object_size, _RET_IP_);
+
+        trace_kmem_cache_alloc(_RET_IP_, ret,
+                               cachep->object_size, cachep->size, flags);
+
+        return ret;
+}
+EXPORT_SYMBOL(kmem_cache_alloc);
+"""
+- This function returns a pointer to an object from the given cache cachep.
+
+
+- To later free an object and return it to its originating slab, use the function:
+"""
+void kmem_cache_free(struct kmem_cache *cachep, void *objp)
+"""
+- This marks the object objp in cachep as free.
+
+"""
+/**
+ * kmem_cache_free - Deallocate an object
+ * @cachep: The cache the allocation was from.
+ * @objp: The previously allocated object.
+ *
+ * Free an object which was previously allocated from this
+ * cache.
+ */
+void kmem_cache_free(struct kmem_cache *cachep, void *objp)
+{
+        unsigned long flags;
+        cachep = cache_from_obj(cachep, objp);
+        if (!cachep)
+                return;
+
+        local_irq_save(flags);
+        debug_check_no_locks_freed(objp, cachep->object_size);
+        if (!(cachep->flags & SLAB_DEBUG_OBJECTS))
+                debug_check_no_obj_freed(objp, cachep->object_size);
+        __cache_free(cachep, objp, _RET_IP_);
+        local_irq_restore(flags);
+
+        trace_kmem_cache_free(_RET_IP_, objp, cachep->name);
+}
+EXPORT_SYMBOL(kmem_cache_free);
+"""
+
+
+Example:
+"""
+kernel/fork.c
+
+void __init fork_init(void)
+{
+        int i;
+#ifndef CONFIG_ARCH_TASK_STRUCT_ALLOCATOR
+#ifndef ARCH_MIN_TASKALIGN
+#define ARCH_MIN_TASKALIGN      0
+#endif
+        int align = max_t(int, L1_CACHE_BYTES, ARCH_MIN_TASKALIGN);
+        unsigned long useroffset, usersize;
+
+        /* create a slab on which task_structs can be allocated */
+        task_struct_whitelist(&useroffset, &usersize);
+        task_struct_cachep = kmem_cache_create_usercopy("task_struct",
+                        arch_task_struct_size, align,
+                        SLAB_PANIC|SLAB_ACCOUNT,
+                        useroffset, usersize, NULL);
+#endif
+
+        /* do the arch specific task caches init */
+        arch_task_cache_init();
+...
+...
+"""
+
+- ARCH_MIN_TASKALIGN - It is usually
+defined as L1_CACHE_BYTES —the size in bytes of the L1 cache.
+
+
+- Each time a process calls fork() , a new process descriptor must be created,
+This is done in dup_task_struct().
+
+"""
+static inline struct task_struct *alloc_task_struct_node(int node)
+{
+        return kmem_cache_alloc_node(task_struct_cachep, GFP_KERNEL, node);
+}
+"""
+
+"""
+static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
+{
+        struct task_struct *tsk;
+...
+        tsk = alloc_task_struct_node(node);
+        if (!tsk)
+            return NULL;
+...
+}
+"""
+
+
+- After a task dies, if it has no children waiting on it, its process descriptor is freed and
+returned to the task_struct_cachep slab cache.This is done in free_task_struct()
+(in which tsk is the exiting task):
+"""
+static inline void free_task_struct(struct task_struct *tsk)
+{
+        kmem_cache_free(task_struct_cachep, tsk);
+}
+"""
+
+- The slab layer handles all the low-level alignment, coloring, allocations,
+freeing, and reaping during low-memory conditions.

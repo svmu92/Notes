@@ -1,0 +1,64 @@
+Q) If other modules need to access a function/variable in you module, won't it give compile time error while linking? - undefined symbols
+Ans: No, they are defined as extern so compile time error won't be there. But while loading if the dependency module is not present, it will give error. So first dependency should be loaded
+
+Q)Removing module added with modprobe
+Ans: $ modprobe -r module
+
+Q) Say module2 depends on module1.. what happens if we try to remove it using modprobe -r?
+
+
+
+
+Text Notes
+
+Linux kernel code, including driver code, must be reentrant—it must be
+capable of running in more than one context at the same time. Data structures must
+be carefully designed to keep multiple threads of execution separate, and the code
+must take care to access shared data in ways that prevent corruption of the data.
+
+
+Kernel code can
+refer to the current process by accessing the global item current , defined in <asm/
+current.h>, which yields a pointer to struct task_struct , defined by <linux/sched.h>.
+The current pointer refers to the process that is currently executing. During the exe-
+cution of a system call, such as open or read, the current process is the one that
+invoked the call. Kernel code can use process-specific information by using current ,
+if it needs to do so.
+
+a device
+driver can just include <linux/sched.h> and refer to the current process.
+
+the following statement prints the process ID and the command name of the current
+process by accessing certain fields in struct task_struct :
+
+printk(KERN_INFO "The process is \"%s\" (pid %i)\n",
+current->comm, current->pid);
+
+The command name stored in current->comm is the base name of the program file
+(trimmed to 15 characters if need be) that is being executed by the current process.
+
+
+
+
+Applications are laid out in virtual memory with a very large stack area. The stack, of
+course, is used to hold the function call history and all automatic variables created by
+currently active functions. The kernel, instead, has a very small stack; it can be as
+small as a single, 4096-byte page. Your functions must share that stack with the
+entire kernel-space call chain. Thus, it is never a good idea to declare large auto-
+matic variables; if you need larger structures, you should allocate them dynamically
+at call time.
+
+
+
+the kernel API, you will encounter function names starting with
+a double underscore ( __ ). Functions so marked are generally a low-level component
+of the interface and should be used with caution.
+
+Kernel code cannot do floating point arithmetic. Enabling floating point would
+require that the kernel save and restore the floating point processor’s state on each
+entry to, and exit from, kernel space—at least, on some architectures.
+
+
+
+
+

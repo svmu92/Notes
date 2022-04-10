@@ -1,0 +1,24 @@
+RCU - LF Live Mentorship
+========================
+
+RW locks
+ - block subsequent cnflicting operations
+- time based mututal exclusion
+
+Disadvantage - As no of cpus (threads) increase, time for operation increases rapidly.
+
+Global agreement is expensive - HW latency
+
+
+Solution
+-------
+- RCU'
+
+- maybe stale but consistent data
+
+
+temporal and spatial synchronization
+
+
+
+Phased state change

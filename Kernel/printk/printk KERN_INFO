@@ -1,0 +1,42 @@
+printk is a C function from the Linux kernel interface that prints messages to the kernel log. It accepts a string parameter called the format string, which specifies a method for rendering an arbitrary number of varied data type parameter(s) into a string. The string is then printed to the kernel log.
+
+It provides a printf-like abstraction and its parsing of the format string and arguments behave exactly the same way. It acts as a debugging tool for kernel programmers who need this function for logging messages from the kernel.
+
+The printk function prototype is:
+
+int printk(const char *fmt, ...);
+
+C standard library and its printf function is unavailable in kernel mode, hence the need for printk. 
+
+Difference with printf
+Logging Levels
+
+printk has an optional prefix string: Loglevel.
+
+Loglevel specifies the type of message being sent to the kernel message log. The syntax with loglevel is:
+
+printk(KERN_DEBUG "Debug message shown!\n");
+
+Different Loglevels, along with their numerical values, are shown here:
+0 	KERN_EMERG 	Emergency condition, system is probably dead
+1 	KERN_ALERT 	Some problem has occurred, immediate attention is needed
+2 	KERN_CRIT 	A critical condition
+3 	KERN_ERR 	An error has occurred
+4 	KERN_WARNING 	A warning
+5 	KERN_NOTICE 	Normal message to take note of
+6 	KERN_INFO 	Some information
+7 	KERN_DEBUG 	Debug information related to the program
+
+When a log level is not specified, the default log level is KERN_WARNING, unless a different default has been set in the kernel itself.
+
+Loglevels are defined in <linux/kern_levels.h>. Which log levels are printed is configured in the /proc/sys/kernel/printk sysctl file (format: console level, default message level, minimum console level, default console level).
+Pointer formats
+
+The %p format is extended to support advanced parameter formatting. For example: %pISpc of a struct sockaddr * would print an IPv4/v6:port in the usual way (e.g. "1.2.3.4:12345" or "[1:2:3:4:5:6:7:8]:12345" depending on the address family). Extensive format list in the Format Reference.
+Description
+
+The function tries to grab the console semaphore (console_sem). If it succeeds, the output is logged and the console drivers are called. If it is not possible to grab the semaphore the output is placed into the log buffer. The current holder of the console semaphore (console_sem) will notice the new output in release_console_sem and will send it to the consoles before releasing the semaphore.
+
+One effect of this deferred printing is that code which calls printk and then changes console_loglevel may break. This is because console_loglevel is inspected when the actual printing occurs.
+
+printk() can be called from anywhere in the Kernel at any time. It can be called from interrupt or process context. It can be called while a lock is held. It can be called simultaneously on multiple processors, yet it does not require the caller to hold a lock. 

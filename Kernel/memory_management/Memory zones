@@ -1,0 +1,301 @@
+
+Memory Zones
+============
+
+- The kernel uses the "zones" structure to describe a zone. It is defined as follows:
+"""
+struct zone {
+	/* zone watermarks, access with *_wmark_pages(zone) macros */
+	unsigned long _watermark[NR_WMARK];
+	unsigned long watermark_boost;
+
+	unsigned long nr_reserved_highatomic;
+
+	long lowmem_reserve[MAX_NR_ZONES];
+
+#ifdef CONFIG_NUMA
+	int node;
+#endif
+	struct pglist_data	*zone_pgdat;
+	struct per_cpu_pages	__percpu *per_cpu_pageset;
+	struct per_cpu_zonestat	__percpu *per_cpu_zonestats;
+	/*
+	 * the high and batch values are copied to individual pagesets for
+	 * faster access
+	 */
+	int pageset_high;
+	int pageset_batch;
+
+#ifndef CONFIG_SPARSEMEM
+	unsigned long		*pageblock_flags;
+#endif /* CONFIG_SPARSEMEM */
+
+	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
+	unsigned long		zone_start_pfn;
+  atomic_long_t		managed_pages;
+	unsigned long		spanned_pages;
+	unsigned long		present_pages;
+#if defined(CONFIG_MEMORY_HOTPLUG)
+	unsigned long		present_early_pages;
+#endif
+#ifdef CONFIG_CMA
+	unsigned long		cma_pages;
+#endif
+
+	const char		*name;
+
+#ifdef CONFIG_MEMORY_ISOLATION
+	unsigned long		nr_isolate_pageblock;
+#endif
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+	/* see spanned/present_pages for more description */
+	seqlock_t		span_seqlock;
+#endif
+
+	int initialized;
+
+	/* Write-intensive fields used from the page allocator */
+	ZONE_PADDING(_pad1_)
+
+	/* free areas of different sizes */
+	struct free_area	free_area[MAX_ORDER];
+
+	/* zone flags, see below */
+	unsigned long		flags;
+
+	/* Primarily protects free_area */
+	spinlock_t		lock;
+
+	/* Write-intensive fields used by compaction and vmstats. */
+	ZONE_PADDING(_pad2_)
+
+	unsigned long percpu_drift_mark;
+
+#if defined CONFIG_COMPACTION || defined CONFIG_CMA
+	/* pfn where compaction free scanner should start */
+	unsigned long		compact_cached_free_pfn;
+	/* pfn where compaction migration scanner should start */
+	unsigned long		compact_cached_migrate_pfn[ASYNC_AND_SYNC];
+	unsigned long		compact_init_migrate_pfn;
+	unsigned long		compact_init_free_pfn;
+#endif
+
+#ifdef CONFIG_COMPACTION
+	unsigned int		compact_considered;
+	unsigned int		compact_defer_shift;
+	int			compact_order_failed;
+#endif
+
+#if defined CONFIG_COMPACTION || defined CONFIG_CMA
+	/* Set to true when the PG_migrate_skip bits should be cleared */
+	bool			compact_blockskip_flush;
+#endif
+
+	bool			contiguous;
+
+	ZONE_PADDING(_pad3_)
+	/* Zone statistics */
+	atomic_long_t		vm_stat[NR_VM_ZONE_STAT_ITEMS];
+	atomic_long_t		vm_numa_event[NR_VM_NUMA_EVENT_ITEMS];
+} ____cacheline_internodealigned_in_smp;
+"""
+
+- It is divided into several sections separated by ZONE_PADDING .
+This is because zone structures are very frequently accessed. On multiprocessor systems, it commonly
+occurs that different CPUs try to access structure elements at the same time.
+
+- Locks are therefore used to prevent them interfering with each, and giving rise to errors and
+inconsistencies. The spinlock of the structure — "zone->lock" is often
+acquired because the kernel very frequently accesses the structure.
+
+- Caches are divided into lines, and
+each line is responsible for various memory areas. The kernel invokes the "ZONE_PADDING" macro to
+generate ‘‘padding‘‘ that is added to the structure to ensure that each lock is in its own cache line.
+The compiler keyword "____cacheline_internodealigned_in_smp" is also used to achieve optimal cache
+alignment.
+
+- padding - the primary aim is to keep the data in a cache line for quick access and thus to dispense with the
+need for loading the data from RAM memory, which is a slow process.
+
+
+Structure members:
+- "_watermark" - used when pages are swapped out.
+The kernel can write pages to hard disk if insufficient RAM memory is available. These
+elements influence the behavior of the swapping daemon.
+
+- The "lowmem_reserve" array specifies several pages for each memory zone that are reserved for
+critical allocations that must not fail under any circumstances. Each zone contributes accord-
+ing to its importance.
+
+- "per_cpu_pageset" - to implement per-CPU hot-n-cold page lists. The kernel uses these lists to
+store fresh pages that can be used to satisfy implementations. However, they are distinguished
+by their cache status: Pages that are most likely still cache-hot and can therefore be quickly
+accessed are separated from cache-cold pages.
+
+- "free_area" is an array of data structures of the same name used to implement the buddy system.
+Each array element stands for contiguous memory areas of a fixed size. Management of free
+memory pages contained in each area is performed starting from "free_area".
+
+
+
+pinned:
+a userspace application could use the "mlock()"
+system call to instruct the kernel that pages must not be removed from physical memory,
+for example, by swapping them out. Such a page is said to be pinned.
+
+- "vm_stat" keeps a plethora of statistical information about the zone.
+The auxiliary function zone_page_state allows for reading the
+information in "vm_stat".
+"""
+static inline unsigned long zone_page_state(struct zone *zone,
+					enum zone_stat_item item)
+{
+	long x = atomic_long_read(&zone->vm_stat[item]);
+#ifdef CONFIG_SMP
+	if (x < 0)
+		x = 0;
+#endif
+	return x;
+}
+"""
+
+- The association between a zone and the parent node is established by "zone_pgdat" , which points
+to the corresponding instance of "pg_list_data".
+
+- "zone_start_pfn" is the index of the first page frame of the zone.
+
+- "name" is a string that holds a conventional name for the zone. Three options are available at
+present: Normal , DMA , and HighMem .
+
+- "spanned_pages" specifies the total number of pages in the zone. However, not all need be usable
+since there may be small holes in the zone as already mentioned. A further counter ( "present_pages" )
+therefore indicates the number of pages that are actually usable. Generally, the value of
+this counter is the same as that for "spanned_pages".
+
+
+
+Calculation of zone watermarks
+------------------------------
+- Before calculating the various watermarks, the kernel first determines the minimum memory space
+that must remain free for critical allocations. This value scales nonlinearly with the size of the available
+RAM. It is stored in the global variable "min_free_kbytes".
+- The file /proc/sys/vm/min_free_kbytes allows reading and adapting the
+value from userland.
+"""
+$ cat /proc/sys/vm/min_free_kbytes
+67584
+"""
+
+
+"""
+enum zone_watermarks {
+	WMARK_MIN,
+	WMARK_LOW,
+	WMARK_HIGH,
+	NR_WMARK
+};
+"""
+
+"""
+**
+ * setup_per_zone_wmarks - called when min_free_kbytes changes
+ * or when memory is hot-{added|removed}
+ *
+ * Ensures that the watermark[min,low,high] values for each zone are set
+ * correctly with respect to min_free_kbytes.
+ */
+void setup_per_zone_wmarks(void)
+{
+	struct zone *zone;
+	static DEFINE_SPINLOCK(lock);
+
+	spin_lock(&lock);
+	__setup_per_zone_wmarks();
+	spin_unlock(&lock);
+
+	/*
+	 * The watermark size have changed so update the pcpu batch
+	 * and high limits or the limits may be inappropriate.
+	 */
+	for_each_zone(zone)
+		zone_pcp_update(zone, 0);
+}
+"""
+
+"""
+static void __setup_per_zone_wmarks(void)
+{
+[...]
+	for_each_zone(zone) {
+  [...]
+  		spin_lock_irqsave(&zone->lock, flags);
+      [...]
+        min_pages = zone_managed_pages(zone) / 1024;
+        min_pages = clamp(min_pages, SWAP_CLUSTER_MAX, 128UL);
+        zone->_watermark[WMARK_MIN] = min_pages;
+
+      [...]
+      zone->watermark_boost = 0;
+      zone->_watermark[WMARK_LOW]  = min_wmark_pages(zone) + tmp;
+      zone->_watermark[WMARK_HIGH] = min_wmark_pages(zone) + tmp * 2;
+      [...]
+      spin_unlock_irqrestore(&zone->lock, flags);
+  }
+  [...]
+}
+"""
+
+
+"""
+init_per_zone_wmark_min()
+|----> setup_per_zone_wmarks()
+       |----> __setup_per_zone_wmarks()
+|----> setup_per_zone_lowmem_reserve();
+"""
+
+- "SWAP_CLUSTER_MAX" - The lower bound for highmem zones, is an important quantity for the whole page
+reclaim subsystem.
+- The code there often operates batchwise on page clusters,
+and SWAP_CLUSTER_MAX defines the size of such clusters.
+
+- Computing "lowmem_reserve" is done in "setup_per_zone_lowmem_reserve". The kernel iterates over all
+nodes of the system and calculates the minimum reserve for each zone of the node by dividing the total
+number of page frames in the zone by "sysctl_lowmem_reserve_ratio[zone]" . The default settings for
+the divisor are 256 for low memory and 32 for high memory.
+
+
+
+
+Hot-N-Cold pages
+----------------
+- The "per_cpu_pageset" element of struct zone is used to implement a hot-n-cold allocator. The kernel refers to
+a page in memory as hot if it is in a CPU cache and its data can therefore be accessed quicker than if
+it were in RAM. Conversely, a cold page is not held in cache. As each CPU has one or more caches on
+multiprocessor systems, management must be separate for each CPU.
+
+- The useful data are held in "per_cpu_pages".
+"""
+/* Fields and list protected by pagesets local_lock in page_alloc.c */
+struct per_cpu_pages {
+	int count;		/* number of pages in the list */
+	int high;		/* high watermark, emptying needed */
+	int batch;		/* chunk size for buddy add/remove */
+	short free_factor;	/* batch scaling factor during free */
+#ifdef CONFIG_NUMA
+	short expire;		/* When 0, remote pagesets are drained */
+#endif
+
+	/* Lists of pages, one per migrate type stored on the pcp-lists */
+	struct list_head lists[NR_PCP_LISTS];
+};
+"""
+
+- "count" keeps a record of the number of pages associated with the element.
+- "high" is a watermark. If the value of count exceeds high , this indicates that there are too many pages in the list.
+
+- "lists" is a doubly linked list that holds the per-CPU pages and is handled using standard methods of the
+kernel.
+
+- If possible, the per-CPU caches are not filled with individual pages but with multipage chunks. "batch" is
+a guideline to the number of pages to be added in a single pass.
